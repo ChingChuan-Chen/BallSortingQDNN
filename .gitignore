@@ -1,1 +1,101 @@
-.idea
+# ---------------------
+# General Ignore Rules
+# ---------------------
+.DS_Store
+Thumbs.db
+*.bak
+*.swp
+
+# ---------------------
+# Python Ignore Rules
+# ---------------------
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+*.egg
+*.env
+.venv/
+.env/
+
+# Pip dependency management
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Virtualenv
+venv/
+
+# Jupyter Notebooks
+.ipynb_checkpoints/
+
+# PyTest cache
+.pytest_cache/
+
+# ---------------------
+# Cython Ignore Rules
+# ---------------------
+*.c
+*.cpp
+*.so
+*.pyd
+*.o
+*.obj
+build/
+dist/
+*.egg-info/
+
+# ---------------------
+# C++ Ignore Rules
+# ---------------------
+*.out
+*.exe
+*.dll
+*.a
+*.lib
+*.la
+*.lo
+*.o
+*.obj
+*.pch
+*.pdb
+
+# CMake and Build
+CMakeLists.txt.user
+CMakeCache.txt
+cmake_install.cmake
+CMakeFiles/
+Makefile
+*.make
+*.ninja
+compile_commands.json
+
+# ---------------------
+# Logs & Debugging
+# ---------------------
+*.log
+*.trace
+*.prof
+
+# ---------------------
+# IDE & Editor Configurations
+# ---------------------
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# ---------------------
+# Generated Files
+# ---------------------
+*.generated.*
+*.pyi
+
+# ---------------------
+# Version Control Backup
+# ---------------------
+*.orig
+*.rej
