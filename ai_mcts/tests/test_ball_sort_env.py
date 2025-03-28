@@ -6,8 +6,8 @@ import pytest
 # Add the lib directory to the Python path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 # Import the BallSortEnv class from the Cython extension
-from env.ball_sort_env import BallSortEnv
-from lib._ball_sort_game import C_BallSortEnv
+from alpha_sort import BallSortEnv
+from alpha_sort.lib._ball_sort_game import C_BallSortEnv
 
 
 @pytest.fixture
@@ -32,6 +32,11 @@ def test_reset(env):
     for i in range(filled_tubes, env.num_tubes):
         assert np.all(state[i] == 0)  # Empty tubes should have no balls
         assert env.num_balls_per_tube[i] == 0
+
+    # validate Cython environment
+    assert env.is_moved() == True
+    assert env.is_solved() == False
+    assert env.get_move_count() == 0
 
 
 def test_is_valid_state(env):

@@ -9,7 +9,7 @@ def build_cython():
     print("Building Cython extensions...")
     setup(
         ext_modules=cythonize(
-            "lib/_ball_sort_game.pyx",
+            ["alpha_sort/lib/_ball_sort_game.pyx", "alpha_sort/lib/_state_utils.pyx"],
             compiler_directives={"language_level": "3"}
         ),
         include_dirs=[np.get_include()],  # Add NumPy include directory

@@ -99,3 +99,6 @@ compile_commands.json
 # ---------------------
 *.orig
 *.rej
+
+ai_1step/checkpoints
+ai_mcts/checkpoints

@@ -1,7 +1,7 @@
 import random
 import numpy as np
 from typing import List, Tuple
-from lib._ball_sort_game import C_BallSortEnv
+from alpha_sort.lib._ball_sort_game import C_BallSortEnv
 
 
 class BallSortEnv:
@@ -11,8 +11,6 @@ class BallSortEnv:
         self.tube_capacity = tube_capacity
         self.num_empty_tubes = num_empty_tubes
         self.num_tubes = num_colors + num_empty_tubes
-        self.max_steps = num_colors * 50
-        self.step_count = 0
 
         # Initialize the state and num_balls_per_tube as NumPy arrays
         self.state = np.zeros((self.num_tubes, self.tube_capacity), dtype=np.int8)
@@ -36,8 +34,9 @@ class BallSortEnv:
         else:
             self.reset()
 
-    def reset(self) -> np.ndarray:
-        self.step_count = 0
+    def reset(self):
+        # Reset the Cython environment
+        self._env.reset()
 
         # Clear the state and num_balls_per_tube
         self.state.fill(0)
@@ -52,8 +51,6 @@ class BallSortEnv:
         for i in range(filled_tubes):
             self.state[i, :] = balls[i * self.tube_capacity:(i + 1) * self.tube_capacity]
             self.num_balls_per_tube[i] = self.tube_capacity
-
-        return self.state
 
     def is_valid_state(self, state: np.ndarray) -> Tuple[bool, str]:
         # Check shape
@@ -74,12 +71,20 @@ class BallSortEnv:
         for color in range(1, self.num_colors + 1):
             if color_counts[color] != self.tube_capacity:
                 return False, f"color {color} appears {color_counts[color]} times"
-
         return True, None
 
     def update_num_balls_per_tube(self):
         for i in range(self.num_tubes):
             self.num_balls_per_tube[i] = np.count_nonzero(self.state[i])
+
+    def is_full_tube(self, tube_idx: int) -> bool:
+        return self._env.is_full_tube(tube_idx)
+
+    def is_empty_tube(self, tube_idx: int) -> bool:
+        return self._env.is_empty_tube(tube_idx)
+
+    def is_completed_tube(self, tube_idx: int) -> bool:
+        return self._env.is_completed_tube(tube_idx)
 
     def top_index(self, tube: int) -> int:
         return self._env.top_index(tube)
@@ -91,6 +96,12 @@ class BallSortEnv:
         self._env.move(src, dst)
         self.update_num_balls_per_tube()
 
+    def undo_move(self, src: int, dst: int) -> None:
+        self._env.undo_move(src, dst)
+
+    def get_move_count(self) -> int:
+        return self._env.get_move_count()
+
     def is_valid_move(self, src: int, dst: int) -> bool:
         return self._env.is_valid_move(src, dst)
 
@@ -99,3 +110,6 @@ class BallSortEnv:
 
     def is_solved(self) -> bool:
         return self._env.is_solved()
+
+    def is_moved(self) -> bool:
+        return self._env.is_moved()
