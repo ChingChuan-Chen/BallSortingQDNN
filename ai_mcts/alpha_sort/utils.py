@@ -16,7 +16,7 @@ def hash_state(state):
     state_bytes = state.tobytes()  # Convert the state to bytes
     return hashlib.sha256(state_bytes).hexdigest()  # Generate a SHA-256 hash
 
-def save_model(agent, num_colors, tube_capacity, episode=None, save_dir="checkpoints"):
+def save_model(agent, num_colors, tube_capacity, episode=None, save_dir="checkpoints") -> str:
     """
     Save the model's state dictionary to a file.
 
@@ -39,52 +39,4 @@ def save_model(agent, num_colors, tube_capacity, episode=None, save_dir="checkpo
     torch.save(agent.policy_net.state_dict(), policy_model_path)
 
     print(f"✅ Policy Network is successfully saved to {policy_model_path}")
-
-
-def state_encode(states: list, max_num_colors: int, num_empty_tubes: int, max_tube_capacity: int) -> np.ndarray:
-    """
-    Encode states into one-hot representations.
-
-    Args:
-        states (list): List of states to encode.
-        max_num_colors (int): Maximum number of colors.
-        num_empty_tubes (int): Number of empty tubes.
-        max_tube_capacity (int): Maximum capacity of each tube.
-
-    Returns:
-        np.ndarray: Encoded states as one-hot representations.
-    """
-    encoded_batch = np.zeros((len(states), max_num_colors + 1, max_num_colors + num_empty_tubes, max_tube_capacity), dtype=np.float32)
-    for env_idx, state in enumerate(states):
-        for tube_idx, tube in enumerate(state):
-            for pos_idx, ball in enumerate(tube):
-                encoded_batch[env_idx, ball, tube_idx, pos_idx] = 1  # One-hot encoding
-    return encoded_batch
-
-def state_decode(encoded_states, num_colors: int, num_empty_tubes: int, tube_capacity: int) -> list:
-    """
-    Decode one-hot encoded states back to the original state representation.
-
-    Args:
-        encoded_states (np.ndarray): One-hot encoded states of shape
-                                      (batch_size, num_colors + 1, num_colors + num_empty_tubes, tube_capacity).
-        num_colors (int): number of colors.
-        num_empty_tubes (int): Number of empty tubes.
-        tube_capacity (int): Capacity of each tube.
-
-    Returns:
-        list: Decoded states as a list of 2D arrays, where each array represents a state.
-    """
-    batch_size = encoded_states.shape[0]
-    decoded_states = []
-
-    for i in range(batch_size):
-        state = np.zeros((num_colors + num_empty_tubes, tube_capacity), dtype=np.int32)
-        for tube_idx in range(num_colors + num_empty_tubes):
-            for pos_idx in range(tube_capacity):
-                # Find the color index (ball type) with the highest value in the one-hot encoding
-                color = np.argmax(encoded_states[i, :, tube_idx, pos_idx])
-                state[tube_idx, pos_idx] = color
-        decoded_states.append(state)
-
-    return decoded_states
+    return policy_model_path

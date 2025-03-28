@@ -28,7 +28,7 @@ class AlphaSortTrainer:
         self.num_tubes = self.num_colors + self.num_empty_tubes
         self.num_envs = len(envs)
         self.max_tubes = max_num_colors + self.num_empty_tubes
-        self.max_step_count = 75 * envs[0].num_colors
+        self.max_step_count = 125 * envs[0].num_colors
         self.hard_factor = self.tube_capacity * self.num_colors ** 2
 
         # Precompute all possible actions
@@ -219,7 +219,7 @@ class AlphaSortTrainer:
                     step_dones[i]
                 )
 
-    def train(self, num_episodes, mcts_simulations=10, mcts_depth=3, top_k=5, epsilon_start=1.0, epsilon_end=0.05, epsilon_decay=0.95, train_steps_per_move=2):
+    def train(self, num_episodes, mcts_simulations=10, mcts_depth=3, top_k=5, epsilon_start=1.0, epsilon_end=0.05, epsilon_decay=0.975, train_steps_per_move=2):
         epsilon = epsilon_start
         recent_results = deque(maxlen=10)
 
@@ -302,6 +302,11 @@ class AlphaSortTrainer:
                 avg_solve_rewards = np.mean(solve_rewards)
             else:
                 avg_solve_rewards = 0.0
+            unsolved_rewards = [total_rewards[i] for i in range(self.num_envs) if not self.envs[i].is_solved()]
+            if len(unsolved_rewards) > 0:
+                avg_unsolved_rewards = np.mean(unsolved_rewards)
+            else:
+                avg_unsolved_rewards = 0.0
             solve_rate = np.mean([env.is_solved() for env in self.envs])
             recent_results.append(solve_rate)
             recent_solve_rate = np.mean(recent_results)
@@ -309,17 +314,21 @@ class AlphaSortTrainer:
             end_time = datetime.datetime.now()
             elapsed_seconds = (end_time - start_time).total_seconds()
             print(
-                f"🎯 Episode {episode: 03d} | Epsilon: {epsilon: .3f} "
-                f"| Solve Rate: {solve_rate * 100: 6.1f}% | Avg. Solve Steps: {avg_solve_steps: 6.1f} | Avg. Solve Rewards: {avg_solve_rewards: 6.2f} "
-                f"| Avg. Rewards : {avg_rewards: 6.2f} | Out of Move Rate: {out_of_move_rate * 100: 6.1f}% | Reach Max Steps Rate: {reach_max_steps_rate * 100: 6.1f}% "
+                f"🎯 Episode {episode: 03d} | Epsilon: {epsilon: .3f} | Solve Rate: {solve_rate * 100: 6.1f}%"
+                f"| Out of Move Rate: {out_of_move_rate * 100: 6.1f}% | Reach Max Steps Rate: {reach_max_steps_rate * 100: 6.1f}% "
                 f"| Last 10 Solve Rate: {recent_solve_rate * 100: 6.1f}%"
             )
             print(
-                f"🕒 Episode {episode: 03d} | Training for Episode {episode: 03d} ended at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}"
+                f"🎯 Episode {episode: 03d} | Avg. Rewards : {avg_rewards: 6.2f} "
+                f"| Avg. Solve Rewards: {avg_solve_rewards: 6.2f} | Avg. Unsolved Rewards: {avg_unsolved_rewards: 6.2f} "
+                f"| Avg. Solve Steps: {avg_solve_steps: 6.1f} "
+            )
+            print(
+                f"🕒 Episode {episode: 03d} | Training for Episode {episode: 03d} ended at: {end_time.strftime('%Y-%m-%d %H:%M:%S')} "
                 f"| Total elapsed time: {elapsed_seconds} seconds "
             )
             print(
-                f"🕒 Episode {episode: 03d} Elapsed Time"
+                f"🕒 Episode {episode: 03d} Elapsed Time "
                 f"| Select actions: {total_select_actions_time / 10**9:.2f} seconds"
                 f"| Compute rewards: {total_compute_rewards_time / 10**9:.2f} seconds"
                 f"| Train step: {total_train_step_time / 10**9:.2f} seconds"
