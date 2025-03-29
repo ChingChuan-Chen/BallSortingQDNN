@@ -3,38 +3,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-class ResBlock(nn.Module):
-    """Residual block with skip connections."""
-    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1):
-        super(ResBlock, self).__init__()
-        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding, bias=False)
-        self.bn1 = nn.BatchNorm2d(out_channels)
-        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size, stride, padding, bias=False)
-        self.bn2 = nn.BatchNorm2d(out_channels)
-
-        # Identity mapping if input and output channels differ
-        self.projection = None
-        if in_channels != out_channels:
-            self.projection = nn.Sequential(
-                nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1, bias=False),
-                nn.BatchNorm2d(out_channels)
-            )
-
-    def forward(self, x):
-        identity = x
-        if self.projection is not None:
-            identity = self.projection(x)
-
-        out = F.relu(self.bn1(self.conv1(x)))
-        out = self.bn2(self.conv2(out))
-
-        out += identity  # Residual connection
-        return F.relu(out)
-
-
 class PolicyNetwork(nn.Module):
     """Simplified ResNet-based DQN using encoded 2D states."""
-    def __init__(self, max_colors, num_colors, max_tube_capacity, hidden_dim=512):
+    def __init__(self, max_colors, num_colors, hidden_dim=512):
         super(PolicyNetwork, self).__init__()
         self.action_dim = (num_colors + 2) * (num_colors + 1)
         self.hidden_dim = hidden_dim
@@ -44,8 +15,9 @@ class PolicyNetwork(nn.Module):
         self.conv1 = nn.Conv2d(in_channels, 64, kernel_size=3, stride=1, padding=1)
         self.bn1 = nn.BatchNorm2d(64)
 
-        # Single Residual Block
-        self.res1 = ResBlock(64, 128)
+        # Second Conv Layer (replacing ResBlock)
+        self.conv2 = nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1)
+        self.bn2 = nn.BatchNorm2d(128)
 
         # Adaptive Average Pooling
         self.global_pool = nn.AdaptiveAvgPool2d((1, 1))
@@ -56,7 +28,7 @@ class PolicyNetwork(nn.Module):
 
     def forward(self, x):
         x = F.relu(self.bn1(self.conv1(x)))
-        x = self.res1(x)
+        x = F.relu(self.bn2(self.conv2(x)))
 
         # Adaptive Pooling
         x = self.global_pool(x)

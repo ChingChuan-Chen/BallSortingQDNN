@@ -22,10 +22,10 @@ class AlphaSortAgent:
         self.device = device
 
         # Policy network for Q-value estimation
-        self.policy_net = PolicyNetwork(max_num_colors, num_colors, max_tube_capacity).to(self.device)
+        self.policy_net = PolicyNetwork(max_num_colors, num_colors).to(self.device)
 
         # Target network for Q-value updates
-        self.target_net = PolicyNetwork(max_num_colors, num_colors, max_tube_capacity).to(self.device)
+        self.target_net = PolicyNetwork(max_num_colors, num_colors).to(self.device)
         self.target_net.load_state_dict(self.policy_net.state_dict())
         self.target_net.eval()
 

@@ -1,7 +1,9 @@
 import random
 import numpy as np
+from collections import defaultdict
 from typing import List, Tuple
 from alpha_sort.lib._ball_sort_game import C_BallSortEnv
+from alpha_sort.utils import hash_state
 
 
 class BallSortEnv:
@@ -15,6 +17,9 @@ class BallSortEnv:
         # Initialize the state and num_balls_per_tube as NumPy arrays
         self.state = np.zeros((self.num_tubes, self.tube_capacity), dtype=np.int8)
         self.num_balls_per_tube = np.zeros(self.num_tubes, dtype=np.int8)
+        self.state_history = defaultdict(int)
+        self.out_of_moves = False
+        self.is_in_recursive_moves = False
 
         # Initialize the Cython environment with memory views
         self._env = C_BallSortEnv(
@@ -30,6 +35,7 @@ class BallSortEnv:
             if not is_valid:
                 raise ValueError(f"State is invalid since {reason}.")
             self.state = state
+            self.state_key = hash_state(self.state)
             self.update_num_balls_per_tube()
         else:
             self.reset()
@@ -51,6 +57,11 @@ class BallSortEnv:
         for i in range(filled_tubes):
             self.state[i, :] = balls[i * self.tube_capacity:(i + 1) * self.tube_capacity]
             self.num_balls_per_tube[i] = self.tube_capacity
+
+        # update state_key and out_of_moves
+        self.state_key = hash_state(self.state)
+        self.out_of_moves = False
+        self.is_in_recursive_moves = False
 
     def is_valid_state(self, state: np.ndarray) -> Tuple[bool, str]:
         # Check shape
@@ -93,11 +104,17 @@ class BallSortEnv:
         return self._env.get_top_color_streak(tube)
 
     def move(self, src: int, dst: int) -> None:
+        self.state_history[self.state_key] += 1
         self._env.move(src, dst)
+        self.state_key = hash_state(self.state)
         self.update_num_balls_per_tube()
 
     def undo_move(self, src: int, dst: int) -> None:
+        self.state_history[self.state_key] -= 1
+        if self.state_history[self.state_key] == 0:
+            del self.state_history[self.state_key]
         self._env.undo_move(src, dst)
+        self.state_key = hash_state(self.state)
 
     def get_move_count(self) -> int:
         return self._env.get_move_count()
@@ -106,7 +123,11 @@ class BallSortEnv:
         return self._env.is_valid_move(src, dst)
 
     def get_valid_actions(self) -> List[Tuple[int, int]]:
-        return self._env.get_valid_actions()
+        valid_actions = self._env.get_valid_actions()
+        if len(valid_actions) == 0:
+            self.out_of_moves = True
+            return []
+        return valid_actions
 
     def is_solved(self) -> bool:
         return self._env.is_solved()

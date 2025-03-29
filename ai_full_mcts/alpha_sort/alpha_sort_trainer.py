@@ -7,6 +7,7 @@ from collections import deque, defaultdict
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from joblib import Parallel, delayed
 from alpha_sort.ball_sort_env import BallSortEnv
 from alpha_sort.utils import save_model, hash_state
@@ -29,7 +30,7 @@ class AlphaSortTrainer:
         self.num_tubes = self.num_colors + self.num_empty_tubes
         self.num_envs = len(envs)
         self.max_tubes = max_num_colors + self.num_empty_tubes
-        self.max_step_count = 70 * envs[0].num_colors
+        self.max_step_count = 75 * envs[0].num_colors
         self.hard_factor = self.tube_capacity * self.num_colors ** 2
 
         # Precompute all possible actions
@@ -55,6 +56,7 @@ class AlphaSortTrainer:
             # Use MCTS to select the best action
             best_action = self.mtcs_search(
                 state=self.envs[env_idx].state.copy(),
+                state_history=self.envs[env_idx].state_history.copy(),
                 valid_actions=valid_actions,
                 mcts_depth=mcts_depth,
                 top_k=top_k
@@ -65,7 +67,7 @@ class AlphaSortTrainer:
 
         return action_indices
 
-    def mtcs_search(self, state, valid_actions, mcts_depth, top_k, discount_factor=0.9):
+    def mtcs_search(self, state, state_history, valid_actions, mcts_depth, top_k, discount_factor=0.9):
         if len(valid_actions) == 0:
             # If no valid actions, return None
             return None
@@ -85,6 +87,9 @@ class AlphaSortTrainer:
             if simulated_env.is_valid_move(src, dst):
                 simulated_env.move(src, dst)
                 immediate_reward = self.compute_action_reward(simulated_env, src, dst)
+                state_key = hash_state(simulated_env.state)
+                if state_history[state_key] >= self.num_tubes:
+                    immediate_reward -= 0.5 * (state_history[state_key] - self.num_colors + 1)
             else:
                 immediate_reward = -150.0 / self.hard_factor  # Penalty for invalid moves
 
@@ -108,24 +113,22 @@ class AlphaSortTrainer:
 
                 # Use the policy network to estimate Q-values or probabilities
                 action_logits_nn_output = self.agent.policy_net(torch.tensor(np.array([encoded_state]), dtype=torch.float32).to(self.agent.device))
-                action_logits = action_logits_nn_output.detach().cpu().numpy().flatten()
+                probs = F.softmax(action_logits_nn_output, dim=0).detach().cpu().numpy().flatten()
 
                 # Mask invalid actions
+                masked_probs = np.zeros_like(probs)
                 valid_action_indices = [self.action_to_index[action] for action in next_valid_actions]
-                masked_logits = np.zeros_like(action_logits)
-                masked_logits[valid_action_indices] = np.exp(action_logits[valid_action_indices] - np.max(action_logits[valid_action_indices]))
-                masked_probs = masked_logits / np.sum(masked_logits)
-
-                # Normalize probabilities for valid actions
-                if masked_probs.sum() > 0:
-                    masked_probs /= masked_probs.sum()
-                else:
+                masked_probs[valid_action_indices] = probs[valid_action_indices]
+                if masked_probs.sum() == 0 or np.count_nonzero(masked_probs) < top_k:
                     masked_probs[valid_action_indices] = 1.0 / len(valid_action_indices)
+                else:
+                    masked_probs /= masked_probs.sum()
 
-                # Select top-K actions based on probabilities
-                if len(next_valid_actions) > top_k:
+                # Select top-k actions based on probabilities
+                selected_indices = valid_action_indices
+                if len(valid_action_indices) > top_k:
                     selected_indices = self.rng.choice(valid_action_indices, size=top_k, replace=False, p=masked_probs[valid_action_indices])
-                    next_valid_actions = [self.index_to_action[idx] for idx in selected_indices]
+                next_valid_actions = [self.index_to_action[idx] for idx in selected_indices]
 
                 # Evaluate rewards for all valid actions
                 next_action_rewards = []
@@ -134,6 +137,9 @@ class AlphaSortTrainer:
                     if simulated_env.is_valid_move(next_src, next_dst):
                         simulated_env.move(next_src, next_dst)
                         reward = self.compute_action_reward(simulated_env, next_src, next_dst) * discount_factor ** depth
+                        state_key = hash_state(simulated_env.state)
+                        if state_history[state_key] >= self.num_tubes:
+                            reward -= 0.5 * (state_history[state_key] - self.num_tubes + 1) * discount_factor ** depth
                         next_action_rewards.append((reward, next_action))
                         simulated_env.undo_move(next_src, next_dst)  # Undo the move to restore the state
                     else:
@@ -150,6 +156,10 @@ class AlphaSortTrainer:
                 if simulated_env.is_valid_move(best_src, best_dst):
                     simulated_env.move(best_src, best_dst)
                     reward = self.compute_action_reward(simulated_env, best_src, best_dst) * discount_factor ** depth
+                    next_state_key = hash_state(simulated_env.state)
+                    state_history[next_state_key] += 1
+                    if state_history[next_state_key] >= self.num_tubes:
+                        reward -= 0.5 * (state_history[next_state_key] - self.num_tubes + 1) * discount_factor ** depth
                 else:
                     reward = -150.0 / self.hard_factor  # Penalty for invalid moves
 
@@ -208,10 +218,18 @@ class AlphaSortTrainer:
                 step_dones[i] = True
             else:
                 env.move(src, dst)
-                next_states[i] = env.state.copy()
-                rewards[i] = -25.0 / self.hard_factor
-                rewards[i] += self.compute_action_reward(env, src, dst)
-                step_dones[i] = env.is_solved()
+
+                if env.state_history[env.state_key] >= self.tube_capacity * self.num_tubes:
+                    env.is_in_recursive_moves = True
+                    rewards[i] = -200.0 / self.hard_factor
+                    next_states[i] = states[i]
+                    step_dones[i] = True
+                else:
+                    next_states[i] = env.state.copy()
+                    rewards[i] += self.compute_action_reward(env, src, dst)
+                    if env.state_history[env.state_key] >= self.num_tubes:
+                        rewards[i] -= 0.5 * (env.state_history[env.state_key] - self.num_tubes + 1)
+                    step_dones[i] = env.is_solved()
 
         return states, next_states, rewards, step_dones
 
@@ -250,16 +268,20 @@ class AlphaSortTrainer:
             total_compute_rewards_time = 0.0
             total_train_step_time = 0.0
             while not np.all(dones) and step_count < self.max_step_count:
-                if step_count % 50 == 0:
+                if step_count % 10 == 0:
+                    solved_envs_count = np.sum([env.is_solved() for env in self.envs])
                     unsolved_envs_count = np.sum([env.is_solved() == 0 for env in self.envs])
                     solve_rate = 1.0 - unsolved_envs_count / self.num_envs
+                    avg_solve_reward = np.sum([total_rewards[i] for i in range(self.num_envs) if self.envs[i].is_solved() == 1]) / solved_envs_count if solved_envs_count > 0 else 0.0
                     avg_unsolved_reward = np.sum([total_rewards[i] for i in range(self.num_envs) if self.envs[i].is_solved() == 0]) / unsolved_envs_count if unsolved_envs_count > 0 else 0.0
-                    out_of_move_rate = np.sum([1 for env in self.envs if env.is_solved() == 0 and len(env.get_valid_actions()) == 0]) / self.num_envs
+                    out_of_move_rate = np.sum([1 for env in self.envs if env.is_solved() == 0 and env.out_of_moves]) / self.num_envs
+                    reach_recursive_moves_rate = np.sum([1 for env in self.envs if env.is_solved() == 0 and env.is_in_recursive_moves]) / self.num_envs
                     done_rate = np.sum(dones) / self.num_envs
                     self.logger.info(
                         f"Episode {episode: 03d} | Step {step_count: 03d} | Solve Rate: {solve_rate * 100.0: 6.2f}% "
-                        f"| Out of Move Rate: {out_of_move_rate * 100.0: 6.2f}% | Avg. Rewards: {np.mean(total_rewards): 6.2f} "
-                        f"| Done Rate: {done_rate * 100.0: 6.2f}% | Avg. Unsolved Rewards: {avg_unsolved_reward: 6.2f}"
+                        f"| Avg. Solve Rewards: {avg_solve_reward: 6.2f} | Avg. Unsolved Rewards: {avg_unsolved_reward: 6.2f} "
+                        f"| Reach Recursive Moves Rate: {reach_recursive_moves_rate * 100.0: 6.2f}% "
+                        f"| Out of Move Rate: {out_of_move_rate * 100.0: 6.2f}% | Done Rate: {done_rate * 100.0: 6.2f}%"
                     )
 
                 # Get valid actions and select actions for each environment
@@ -297,13 +319,14 @@ class AlphaSortTrainer:
             total_update_target_network_time = time.time_ns() - update_target_network_start
 
             # Log training progress
-            out_of_move_rate = np.sum([1 for env in self.envs if env.is_solved() == 0 and len(env.get_valid_actions()) == 0]) / self.num_envs
+            out_of_move_rate = np.sum([1 for env in self.envs if env.is_solved() == 0 and env.out_of_moves]) / self.num_envs
             reach_max_steps_rate = np.mean([env.get_move_count() >= self.max_step_count for env in self.envs])
+            reach_recursive_moves_rate = np.sum([1 for env in self.envs if env.is_solved() == 0 and env.is_in_recursive_moves]) / self.num_envs
             solved_envs_count = np.sum([env.is_solved() for env in self.envs])
+            unsolved_envs_count = np.sum([env.is_solved() == 0 for env in self.envs])
             avg_solve_step = np.sum([env.get_move_count() for env in self.envs if env.is_solved()]) / solved_envs_count if solved_envs_count > 0 else 0.0
-            avg_rewards = np.mean(total_rewards)
-            avg_solve_reward = np.sum([total_rewards[i] for i in range(self.num_envs) if self.envs[i].is_solved()]) / solved_envs_count if solved_envs_count > 0 else 0.0
-            avg_unsolve_reward = np.sum([total_rewards[i] for i in range(self.num_envs) if self.envs[i].is_solved() == 0]) / (self.num_envs - solved_envs_count) if (self.num_envs - solved_envs_count) > 0 else 0.0
+            avg_solve_reward = np.sum([total_rewards[i] for i in range(self.num_envs) if self.envs[i].is_solved() == 1]) / solved_envs_count if solved_envs_count > 0 else 0.0
+            avg_unsolve_reward = np.sum([total_rewards[i] for i in range(self.num_envs) if self.envs[i].is_solved() == 0]) / unsolved_envs_count if unsolved_envs_count > 0 else 0.0
             solve_rate = np.mean([env.is_solved() for env in self.envs])
             recent_results.append(solve_rate)
             recent_solve_rate = np.mean(recent_results)
@@ -312,18 +335,18 @@ class AlphaSortTrainer:
             self.logger.info(
                 f"Episode {episode: 03d} | Solve Rate: {solve_rate * 100: 6.1f}%"
                 f"| Out of Move Rate: {out_of_move_rate * 100: 6.1f}% | Reach Max Steps Rate: {reach_max_steps_rate * 100: 6.1f}% "
+                f"| Reach Recursive Moves Rate: {reach_recursive_moves_rate * 100: 6.1f}% "
                 f"| Last 10 Solve Rate: {recent_solve_rate * 100: 6.1f}%"
             )
             self.logger.info(
-                f"Episode {episode: 03d} | Avg. Rewards : {avg_rewards: 6.2f} "
-                f"| Avg. Solve Rewards: {avg_solve_reward: 6.2f} | Avg. Unsolved Rewards: {avg_unsolve_reward: 6.2f} "
+                f"Episode {episode: 03d} | Avg. Solve Rewards: {avg_solve_reward: 6.2f} | Avg. Unsolved Rewards: {avg_unsolve_reward: 6.2f} "
                 f"| Avg. Solve Steps: {avg_solve_step: 6.1f} "
             )
             self.logger.info(
                 f"Episode {episode: 03d} | Total elapsed time for Episode {episode: 03d}: {elapsed_seconds} seconds "
             )
             self.logger.info(
-                f"Episode {episode: 03d} Elapsed Time "
+                f"Episode {episode: 03d} | Elapsed Time "
                 f"| Select actions: {total_select_actions_time / 10**9:.2f} seconds"
                 f"| Compute rewards: {total_compute_rewards_time / 10**9:.2f} seconds"
                 f"| Train step: {total_train_step_time / 10**9:.2f} seconds"

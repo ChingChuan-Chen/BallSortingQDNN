@@ -3,7 +3,7 @@ from .alpha_sort_agent import AlphaSortAgent
 from .ball_sort_env import BallSortEnv
 from .policy_network import PolicyNetwork
 from .replay_memory import ReplayMemory
-from .trainer import AlphaSortTrainer
+from .alpha_sort_trainer import AlphaSortTrainer
 from .utils import save_model
 from .lib._state_utils import state_encode, state_decode
 
