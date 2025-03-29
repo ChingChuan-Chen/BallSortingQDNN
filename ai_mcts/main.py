@@ -12,16 +12,16 @@ if __name__ == "__main__":
     max_num_colors = 12
     num_empty_tubes = 2
     max_number_tubes = max_num_colors + num_empty_tubes
-    n_envs = 256
-    previous_model_path = 'checkpoints/alphasort_policy_5c_4cap_ep0010.pth'
+    n_envs = 128
+    previous_model_path = 'models/alphasort_policy_7c_4cap.pth'
 
     train_game_size = [
-        # {"num_colors": 4, "capacity": 4, "episodes": 50, "epsilon_decay":0.95},
-        {"num_colors": 5, "capacity": 4, "episodes": 50, "epsilon_decay":0.95},
-        {"num_colors": 6, "capacity": 4, "episodes": 100, "epsilon_decay":0.975},
-        {"num_colors": 7, "capacity": 4, "episodes": 100, "epsilon_decay":0.975},
-        {"num_colors": 8, "capacity": 4, "episodes": 200, "epsilon_decay":0.99},
-        {"num_colors": 9, "capacity": 4, "episodes": 300, "epsilon_decay":0.9925},
+        # {"num_colors": 4, "capacity": 4, "episodes": 50},
+        {"num_colors": 5, "capacity": 4, "episodes": 150},
+        {"num_colors": 6, "capacity": 4, "episodes": 150},
+        {"num_colors": 7, "capacity": 4, "episodes": 150},
+        {"num_colors": 8, "capacity": 4, "episodes": 200},
+        # {"num_colors": 9, "capacity": 4, "episodes": 300},
         # {"num_colors": 10, "capacity": 4, "episodes": 1500},
         # {"num_colors": 11, "capacity": 4, "episodes": 1800},
         # {"num_colors": 12, "capacity": 4, "episodes": 2200},
@@ -37,7 +37,6 @@ if __name__ == "__main__":
         num_colors = stage["num_colors"]
         tube_capacity = stage["capacity"]
         episodes = stage["episodes"]
-        epsilon_decay = stage.get("epsilon_decay", 0.995)
 
         print(f"\n🧪 Training on puzzle with {num_colors} colors, capacity {tube_capacity}, for {episodes} episodes on {device}.")
 
@@ -54,6 +53,6 @@ if __name__ == "__main__":
             print("No previous model found, start fresh.")
 
         trainer = AlphaSortTrainer(envs, agent, max_num_colors, max_tube_capacity)
-        trainer.train(episodes, mcts_simulations=10, mcts_depth=3, train_steps_per_move=2)
+        trainer.train(episodes, train_steps_per_move=4)
 
         previous_model_path = save_model(agent, num_colors, tube_capacity, save_dir="models")

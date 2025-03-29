@@ -38,7 +38,7 @@ class AlphaSortTrainer:
         self.action_to_index = {a: idx for idx, a in enumerate(self.all_possible_actions)}
         self.index_to_action = {idx: a for a, idx in self.action_to_index.items()}
 
-    def select_actions(self, all_valid_actions, epsilon, dones, mcts_simulations=10, mcts_depth=3, top_k=5):
+    def select_actions(self, all_valid_actions, dones, mcts_simulations=5, mcts_depth=4, top_k=3):
         action_indices = []
         for env_idx in range(self.num_envs):
             if dones[env_idx] or len(all_valid_actions[env_idx]) == 0:
@@ -48,32 +48,13 @@ class AlphaSortTrainer:
             # Get valid actions for the current environment
             valid_actions = all_valid_actions[env_idx]
 
-            # Perform epsilon-greedy exploration
-            if self.rng.random() < epsilon:
-                # Perform DFS to explore mcts_depth branches
-                best_action = self.mtcs_search(
-                    state=self.envs[env_idx].state.copy(),
-                    valid_actions=valid_actions,
-                    depth=mcts_depth,
-                    top_k=top_k
-                )
-            else:
-                # Evaluate the state using the policy network
-                encoded_state = np.array([state_encode(self.envs[env_idx].state, self.max_num_colors, self.num_empty_tubes, self.max_tube_capacity)])
-                action_logits = self.agent.policy_net(torch.tensor(encoded_state, dtype=torch.float32).to(self.agent.device))
-                action_logits = action_logits.detach().cpu().numpy().flatten()
-                exp_logits = np.exp(action_logits - np.max(action_logits))
-
-                valid_action_indices = [self.action_to_index[action] for action in valid_actions]
-                if np.sum(exp_logits[valid_action_indices]) > 0.0:
-                    masked_probs = exp_logits[valid_action_indices] / np.sum(exp_logits[valid_action_indices])
-                    masked_probs /= masked_probs.sum()
-                else:
-                    masked_probs = np.ones(len(valid_action_indices)) / len(valid_action_indices)
-
-                # Select the best action based on the policy network
-                chosen_action_idx = self.rng.choice(valid_action_indices, p=masked_probs)
-                best_action = self.index_to_action[chosen_action_idx]
+            # Use MCTS to select the best action
+            best_action = self.mtcs_search(
+                state=self.envs[env_idx].state.copy(),
+                valid_actions=valid_actions,
+                depth=mcts_depth,
+                top_k=top_k
+            )
 
             # Convert the selected action to its index
             action_indices.append(self.action_to_index[best_action])
@@ -113,10 +94,34 @@ class AlphaSortTrainer:
                 if len(next_valid_actions) == 0:
                     break
 
+                # Encode the current state for the policy network
+                encoded_state = state_encode(
+                    simulated_env.state,
+                    self.max_num_colors,
+                    self.num_empty_tubes,
+                    self.max_tube_capacity
+                )
+
+                # Use the policy network to estimate Q-values or probabilities
+                action_logits_nn_output = self.agent.policy_net(torch.tensor(np.array([encoded_state]), dtype=torch.float32).to(self.agent.device))
+                action_logits = action_logits_nn_output.detach().cpu().numpy().flatten()
+
+                # Mask invalid actions
+                valid_action_indices = [self.action_to_index[action] for action in next_valid_actions]
+                masked_logits = np.zeros_like(action_logits)
+                masked_logits[valid_action_indices] = np.exp(action_logits[valid_action_indices] - np.max(action_logits[valid_action_indices]))
+                masked_probs = masked_logits / np.sum(masked_logits)
+
+                # Normalize probabilities for valid actions
+                if masked_probs.sum() > 0:
+                    masked_probs /= masked_probs.sum()
+                else:
+                    masked_probs[valid_action_indices] = 1.0 / len(valid_action_indices)
+
+                # Select top-K actions based on probabilities
                 if len(next_valid_actions) > top_k:
-                    # Randomly select top-K actions
-                    self.rng.shuffle(next_valid_actions)
-                    next_valid_actions = next_valid_actions[:top_k]
+                    selected_indices = self.rng.choice(valid_action_indices, size=top_k, replace=False, p=masked_probs[valid_action_indices])
+                    next_valid_actions = [self.index_to_action[idx] for idx in selected_indices]
 
                 # Evaluate rewards for all valid actions
                 next_action_rewards = []
@@ -124,25 +129,29 @@ class AlphaSortTrainer:
                     next_src, next_dst = next_action
                     if simulated_env.is_valid_move(next_src, next_dst):
                         simulated_env.move(next_src, next_dst)
-                        reward = self.compute_action_reward(simulated_env, next_src, next_dst)
+                        reward = self.compute_action_reward(simulated_env, next_src, next_dst) * discount_factor ** d
                         next_action_rewards.append((reward, next_action))
                         simulated_env.undo_move(next_src, next_dst)  # Undo the move to restore the state
                     else:
                         next_action_rewards.append((-150.0 / self.hard_factor, next_action))  # Penalty for invalid moves
 
-                # Select the best action based on reward
-                best_next_action = max(next_action_rewards, key=lambda x: x[0])[1]
-
                 # Simulate the best action
+                best_next_action = max(
+                    next_action_rewards,
+                    key=lambda x: x[0] * masked_probs[self.action_to_index[x[1]]]
+                )[1]
+
+                # Simulate the selected action
                 best_src, best_dst = best_next_action
                 if simulated_env.is_valid_move(best_src, best_dst):
                     simulated_env.move(best_src, best_dst)
-                    reward = self.compute_action_reward(simulated_env, best_src, best_dst)
+                    reward = self.compute_action_reward(simulated_env, best_src, best_dst) * discount_factor ** d
                 else:
                     reward = -150.0 / self.hard_factor  # Penalty for invalid moves
 
+
                 # Add the reward to the cumulative reward
-                cumulative_reward += reward * discount_factor ** d
+                cumulative_reward += reward
 
             # Store the cumulative reward for the action
             action_rewards[action] = cumulative_reward
@@ -219,8 +228,7 @@ class AlphaSortTrainer:
                     step_dones[i]
                 )
 
-    def train(self, num_episodes, mcts_simulations=10, mcts_depth=3, top_k=5, epsilon_start=1.0, epsilon_end=0.05, epsilon_decay=0.975, train_steps_per_move=2):
-        epsilon = epsilon_start
+    def train(self, num_episodes, mcts_simulations=5, mcts_depth=4, top_k=3, train_steps_per_move=2):
         recent_results = deque(maxlen=10)
 
         for episode in range(num_episodes):
@@ -248,7 +256,7 @@ class AlphaSortTrainer:
                 # Get valid actions and select actions for each environment
                 select_actions_start = time.time_ns()
                 all_valid_actions = [env.get_valid_actions() for env in self.envs]
-                action_indices = self.select_actions(all_valid_actions, epsilon, dones, mcts_simulations, mcts_depth, top_k)
+                action_indices = self.select_actions(all_valid_actions, dones, mcts_simulations, mcts_depth, top_k)
                 total_select_actions_time += time.time_ns() - select_actions_start
 
                 # Map action indices to actions
@@ -285,9 +293,6 @@ class AlphaSortTrainer:
                 self.agent.update_target_network()
             total_update_target_network_time = time.time_ns() - update_target_network_start
 
-            # Decay epsilon
-            epsilon = max(epsilon * epsilon_decay, epsilon_end)
-
             # Log training progress
             out_of_move_rate = unsolved_no_valid_actions_count / self.num_envs
             reach_max_steps_rate = np.mean([env.get_move_count() >= self.max_step_count for env in self.envs])
@@ -314,7 +319,7 @@ class AlphaSortTrainer:
             end_time = datetime.datetime.now()
             elapsed_seconds = (end_time - start_time).total_seconds()
             print(
-                f"🎯 Episode {episode: 03d} | Epsilon: {epsilon: .3f} | Solve Rate: {solve_rate * 100: 6.1f}%"
+                f"🎯 Episode {episode: 03d} | Solve Rate: {solve_rate * 100: 6.1f}%"
                 f"| Out of Move Rate: {out_of_move_rate * 100: 6.1f}% | Reach Max Steps Rate: {reach_max_steps_rate * 100: 6.1f}% "
                 f"| Last 10 Solve Rate: {recent_solve_rate * 100: 6.1f}%"
             )
