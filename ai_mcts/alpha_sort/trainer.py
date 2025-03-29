@@ -201,7 +201,7 @@ class AlphaSortTrainer:
             if not env.is_valid_move(src, dst):
                 rewards[i] = -150.0 / self.hard_factor
                 next_states[i] = states[i]
-                step_dones[i] = False
+                step_dones[i] = True
             else:
                 env.move(src, dst)
                 next_states[i] = env.state.copy()
@@ -247,10 +247,15 @@ class AlphaSortTrainer:
             total_train_step_time = 0.0
             while not np.all(dones) and step_count < self.max_step_count:
                 if step_count % 50 == 0:
-                    avg_unsolved_reward = np.mean([total_rewards[i] for i in range(self.num_envs) if not self.envs[i].is_solved()])
+                    unsolved_envs_count = np.sum([env.is_solved() == 0 for env in self.envs])
+                    solve_rate = 1.0 - unsolved_envs_count / self.num_envs
+                    avg_unsolved_reward = np.sum([total_rewards[i] for i in range(self.num_envs) if self.envs[i].is_solved() == 0]) / unsolved_envs_count if unsolved_envs_count > 0 else 0.0
+                    out_of_move_rate = np.sum([1 for env in self.envs if env.is_solved() == 0 and len(env.get_valid_actions()) == 0]) / self.num_envs
+                    done_rate = np.sum(dones) / self.num_envs
                     print(
-                        f"🕒 Episode {episode: 03d} | Step {step_count: 03d} | Solve Rate: {np.mean([env.is_solved() for env in self.envs]) * 100: 6.2f}% "
-                        f"| Done Rate: {np.average(dones) * 100: 6.2f}% | Avg. Rewards: {np.mean(total_rewards): 6.2f} | Avg. Unsolved Rewards: {avg_unsolved_reward: 6.2f}"
+                        f"🕒 Episode {episode: 03d} | Step {step_count: 03d} | Solve Rate: {solve_rate * 100.0: 6.2f}% "
+                        f"| Out of Move Rate: {out_of_move_rate * 100.0: 6.2f}% | Avg. Rewards: {np.mean(total_rewards): 6.2f} "
+                        f"| Done Rate: {done_rate * 100.0: 6.2f}% | Avg. Unsolved Rewards: {avg_unsolved_reward: 6.2f}"
                     )
 
                 # Get valid actions and select actions for each environment
@@ -281,12 +286,6 @@ class AlphaSortTrainer:
                 total_rewards += rewards
                 step_count += 1
 
-            # Count puzzles that are not solved but have no valid actions
-            unsolved_no_valid_actions_count = 0
-            for i, env in enumerate(self.envs):
-                if not env.is_solved() and len(env.get_valid_actions()) == 0:
-                    unsolved_no_valid_actions_count += 1
-
             # Update the target network periodically
             update_target_network_start = time.time_ns()
             if episode % self.agent.target_update_freq == 0:
@@ -294,24 +293,13 @@ class AlphaSortTrainer:
             total_update_target_network_time = time.time_ns() - update_target_network_start
 
             # Log training progress
-            out_of_move_rate = unsolved_no_valid_actions_count / self.num_envs
+            out_of_move_rate = np.sum([1 for env in self.envs if env.is_solved() == 0 and len(env.get_valid_actions()) == 0]) / self.num_envs
             reach_max_steps_rate = np.mean([env.get_move_count() >= self.max_step_count for env in self.envs])
-            solve_step_counts = [env.get_move_count() for env in self.envs if env.is_solved()]
-            if len(solve_step_counts) > 0:
-                avg_solve_steps = np.mean(solve_step_counts)
-            else:
-                avg_solve_steps = 0.0
+            solved_envs_count = np.sum([env.is_solved() for env in self.envs])
+            avg_solve_step = np.sum([env.get_move_count() for env in self.envs if env.is_solved()]) / solved_envs_count if solved_envs_count > 0 else 0.0
             avg_rewards = np.mean(total_rewards)
-            solve_rewards = [total_rewards[i] for i in range(self.num_envs) if self.envs[i].is_solved()]
-            if len(solve_rewards) > 0:
-                avg_solve_rewards = np.mean(solve_rewards)
-            else:
-                avg_solve_rewards = 0.0
-            unsolved_rewards = [total_rewards[i] for i in range(self.num_envs) if not self.envs[i].is_solved()]
-            if len(unsolved_rewards) > 0:
-                avg_unsolved_rewards = np.mean(unsolved_rewards)
-            else:
-                avg_unsolved_rewards = 0.0
+            avg_solve_reward = np.sum([total_rewards[i] for i in range(self.num_envs) if self.envs[i].is_solved()]) / solved_envs_count if solved_envs_count > 0 else 0.0
+            avg_unsolve_reward = np.sum([total_rewards[i] for i in range(self.num_envs) if self.envs[i].is_solved() == 0]) / (self.num_envs - solved_envs_count) if (self.num_envs - solved_envs_count) > 0 else 0.0
             solve_rate = np.mean([env.is_solved() for env in self.envs])
             recent_results.append(solve_rate)
             recent_solve_rate = np.mean(recent_results)
@@ -325,8 +313,8 @@ class AlphaSortTrainer:
             )
             print(
                 f"🎯 Episode {episode: 03d} | Avg. Rewards : {avg_rewards: 6.2f} "
-                f"| Avg. Solve Rewards: {avg_solve_rewards: 6.2f} | Avg. Unsolved Rewards: {avg_unsolved_rewards: 6.2f} "
-                f"| Avg. Solve Steps: {avg_solve_steps: 6.1f} "
+                f"| Avg. Solve Rewards: {avg_solve_reward: 6.2f} | Avg. Unsolved Rewards: {avg_unsolve_reward: 6.2f} "
+                f"| Avg. Solve Steps: {avg_solve_step: 6.1f} "
             )
             print(
                 f"🕒 Episode {episode: 03d} | Training for Episode {episode: 03d} ended at: {end_time.strftime('%Y-%m-%d %H:%M:%S')} "

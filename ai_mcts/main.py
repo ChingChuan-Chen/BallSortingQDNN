@@ -53,6 +53,6 @@ if __name__ == "__main__":
             print("No previous model found, start fresh.")
 
         trainer = AlphaSortTrainer(envs, agent, max_num_colors, max_tube_capacity)
-        trainer.train(episodes, train_steps_per_move=4)
+        trainer.train(episodes, mcts_simulations=5, mcts_depth=4, top_k=3, train_steps_per_move=4)
 
         previous_model_path = save_model(agent, num_colors, tube_capacity, save_dir="models")
