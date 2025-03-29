@@ -2,6 +2,7 @@ import os
 import numpy as np
 import torch
 import hashlib
+import logging
 
 def hash_state(state):
     """
@@ -27,6 +28,7 @@ def save_model(agent, num_colors, tube_capacity, episode=None, save_dir="checkpo
         episode (int): Current training episode.
         save_dir (str): Directory to save the model.
     """
+    logger = logging.getLogger(__name__)
     # Ensure the save directory exists
     os.makedirs(save_dir, exist_ok=True)
 
@@ -38,5 +40,5 @@ def save_model(agent, num_colors, tube_capacity, episode=None, save_dir="checkpo
     policy_model_path = os.path.join(save_dir, policy_model_name)
     torch.save(agent.policy_net.state_dict(), policy_model_path)
 
-    print(f"✅ Policy Network is successfully saved to {policy_model_path}")
+    logger.info(f"✅ Policy Network is successfully saved to {policy_model_path}")
     return policy_model_path

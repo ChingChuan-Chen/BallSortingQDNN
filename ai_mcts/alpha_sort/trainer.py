@@ -2,6 +2,7 @@ import time
 import math
 import random
 import datetime
+import logging
 from collections import deque, defaultdict
 
 import numpy as np
@@ -28,7 +29,7 @@ class AlphaSortTrainer:
         self.num_tubes = self.num_colors + self.num_empty_tubes
         self.num_envs = len(envs)
         self.max_tubes = max_num_colors + self.num_empty_tubes
-        self.max_step_count = 125 * envs[0].num_colors
+        self.max_step_count = 70 * envs[0].num_colors
         self.hard_factor = self.tube_capacity * self.num_colors ** 2
 
         # Precompute all possible actions
@@ -37,6 +38,9 @@ class AlphaSortTrainer:
         ]
         self.action_to_index = {a: idx for idx, a in enumerate(self.all_possible_actions)}
         self.index_to_action = {idx: a for a, idx in self.action_to_index.items()}
+
+        # initialize logger
+        self.logger = logging.getLogger(__name__)
 
     def select_actions(self, all_valid_actions, dones, mcts_simulations=5, mcts_depth=4, top_k=3):
         action_indices = []
@@ -306,21 +310,21 @@ class AlphaSortTrainer:
 
             end_time = datetime.datetime.now()
             elapsed_seconds = (end_time - start_time).total_seconds()
-            print(
+            self.logger.info(
                 f"🎯 Episode {episode: 03d} | Solve Rate: {solve_rate * 100: 6.1f}%"
                 f"| Out of Move Rate: {out_of_move_rate * 100: 6.1f}% | Reach Max Steps Rate: {reach_max_steps_rate * 100: 6.1f}% "
                 f"| Last 10 Solve Rate: {recent_solve_rate * 100: 6.1f}%"
             )
-            print(
+            self.logger.info(
                 f"🎯 Episode {episode: 03d} | Avg. Rewards : {avg_rewards: 6.2f} "
                 f"| Avg. Solve Rewards: {avg_solve_reward: 6.2f} | Avg. Unsolved Rewards: {avg_unsolve_reward: 6.2f} "
                 f"| Avg. Solve Steps: {avg_solve_step: 6.1f} "
             )
-            print(
+            self.logger.info(
                 f"🕒 Episode {episode: 03d} | Training for Episode {episode: 03d} ended at: {end_time.strftime('%Y-%m-%d %H:%M:%S')} "
                 f"| Total elapsed time: {elapsed_seconds} seconds "
             )
-            print(
+            self.logger.info(
                 f"🕒 Episode {episode: 03d} Elapsed Time "
                 f"| Select actions: {total_select_actions_time / 10**9:.2f} seconds"
                 f"| Compute rewards: {total_compute_rewards_time / 10**9:.2f} seconds"
@@ -330,4 +334,5 @@ class AlphaSortTrainer:
 
             # Save the model periodically
             if episode > 0 and episode % 5 == 0:
-                save_model(self.agent, self.num_colors, self.tube_capacity, episode)
+                model_save_path = save_model(self.agent, self.num_colors, self.tube_capacity, episode)
+                logging.info(f"Model for the checkpoint at episode {episode: 03d} is saved to {model_save_path}.")

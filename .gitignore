@@ -102,3 +102,4 @@ compile_commands.json
 
 ai_1step/checkpoints
 ai_mcts/checkpoints
+training_log.txt

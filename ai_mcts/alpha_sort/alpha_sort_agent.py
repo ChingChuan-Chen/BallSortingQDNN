@@ -86,4 +86,3 @@ class AlphaSortAgent:
             policy_state["fc2.bias"].zero_()
 
         self.policy_net.load_state_dict(policy_state, strict=False)
-        print(f"✅ Loaded pretrained weights for policy network from {pretrained_model_path}")

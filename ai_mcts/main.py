@@ -1,5 +1,14 @@
 import sys
 import os
+import logging
+
+# Configure the logger
+logging.basicConfig(
+    filename='training_log.txt',  # Log file name
+    filemode='a',                # Append mode
+    format='%(asctime)s - %(levelname)s - %(message)s',  # Log format
+    level=logging.INFO           # Log level
+)
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '.')))
 
@@ -7,13 +16,20 @@ if __name__ == "__main__":
     from alpha_sort import BallSortEnv, AlphaSortAgent, AlphaSortTrainer, save_model
     import torch
 
+    # Create a logger instance
+    logger = logging.getLogger(__name__)
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    console_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+    logger.addHandler(console_handler)
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     max_tube_capacity = 8
     max_num_colors = 12
     num_empty_tubes = 2
     max_number_tubes = max_num_colors + num_empty_tubes
     n_envs = 128
-    previous_model_path = 'models/alphasort_policy_7c_4cap.pth'
+    previous_model_path = 'checkpoints/alphasort_policy_5c_4cap_ep0020.pth'
 
     train_game_size = [
         # {"num_colors": 4, "capacity": 4, "episodes": 50},
@@ -38,7 +54,7 @@ if __name__ == "__main__":
         tube_capacity = stage["capacity"]
         episodes = stage["episodes"]
 
-        print(f"\n🧪 Training on puzzle with {num_colors} colors, capacity {tube_capacity}, for {episodes} episodes on {device}.")
+        logger.info(f"\n🧪 Training on puzzle with {num_colors} colors, capacity {tube_capacity}, for {episodes} episodes on {device}.")
 
         envs = [BallSortEnv(num_colors, tube_capacity, num_empty_tubes) for _ in range(n_envs)]
 
@@ -46,11 +62,11 @@ if __name__ == "__main__":
 
         # Create a fresh or shared agent (shared helps retain learning across stages)
         if previous_model_path is not None:
-            print("Previous model exists, load the weights...")
+            logger.info("Previous model exists, load the weights...")
             agent.load_pretrained_weights(previous_model_path)
-            print("Weights is loaded")
+            logger.info("Weights is loaded")
         else:
-            print("No previous model found, start fresh.")
+            logger.info("No previous model found, start fresh.")
 
         trainer = AlphaSortTrainer(envs, agent, max_num_colors, max_tube_capacity)
         trainer.train(episodes, mcts_simulations=5, mcts_depth=4, top_k=3, train_steps_per_move=4)
