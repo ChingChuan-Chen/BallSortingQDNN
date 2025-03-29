@@ -40,5 +40,5 @@ def save_model(agent, num_colors, tube_capacity, episode=None, save_dir="checkpo
     policy_model_path = os.path.join(save_dir, policy_model_name)
     torch.save(agent.policy_net.state_dict(), policy_model_path)
 
-    logger.info(f"✅ Policy Network is successfully saved to {policy_model_path}")
+    logger.info(f"Policy Network is successfully saved to {policy_model_path}")
     return policy_model_path
