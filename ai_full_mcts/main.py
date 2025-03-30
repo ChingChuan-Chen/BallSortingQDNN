@@ -28,7 +28,7 @@ if __name__ == "__main__":
     max_num_colors = 12
     num_empty_tubes = 2
     max_number_tubes = max_num_colors + num_empty_tubes
-    n_envs = 64
+    n_envs = 256
     previous_model_path = None
 
     train_game_size = [
@@ -58,7 +58,7 @@ if __name__ == "__main__":
 
         envs = [BallSortEnv(num_colors, tube_capacity, num_empty_tubes) for _ in range(n_envs)]
 
-        agent = AlphaSortAgent(num_colors, max_num_colors, max_tube_capacity, device, batch_size=256)
+        agent = AlphaSortAgent(num_colors, max_num_colors, max_tube_capacity, device, batch_size=512)
 
         # Create a fresh or shared agent (shared helps retain learning across stages)
         if previous_model_path is not None:
@@ -69,6 +69,6 @@ if __name__ == "__main__":
             logger.info("No previous model found, start fresh.")
 
         trainer = AlphaSortTrainer(envs, agent, max_num_colors, max_tube_capacity)
-        trainer.train(episodes, mcts_depth=5, top_k=5, train_steps_per_move=4)
+        trainer.train(episodes, mcts_depth=3, train_steps_per_move=2)
 
         previous_model_path = save_model(agent, num_colors, tube_capacity, save_dir="models")

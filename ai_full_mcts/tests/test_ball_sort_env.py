@@ -18,19 +18,19 @@ def env():
 
 def test_reset(env):
     """Test the reset method."""
-    state = env.reset()
+    env.reset()
 
     # Validate the state shape
-    assert state.shape == (env.num_tubes, env.tube_capacity)
+    assert env.state.shape == (env.num_tubes, env.tube_capacity)
 
     # Validate the number of balls per tube
     filled_tubes = env.num_tubes - env.num_empty_tubes
     for i in range(filled_tubes):
-        assert np.all(state[i] > 0)  # Filled tubes should have balls
+        assert np.all(env.state[i] > 0)  # Filled tubes should have balls
         assert env.num_balls_per_tube[i] == env.tube_capacity
 
     for i in range(filled_tubes, env.num_tubes):
-        assert np.all(state[i] == 0)  # Empty tubes should have no balls
+        assert np.all(env.state[i] == 0)  # Empty tubes should have no balls
         assert env.num_balls_per_tube[i] == 0
 
     # validate Cython environment

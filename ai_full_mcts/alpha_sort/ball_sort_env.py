@@ -1,6 +1,6 @@
 import random
 import numpy as np
-from collections import defaultdict
+from collections import defaultdict, deque
 from typing import List, Tuple
 from alpha_sort.lib._ball_sort_game import C_BallSortEnv
 from alpha_sort.utils import hash_state
@@ -17,9 +17,14 @@ class BallSortEnv:
         # Initialize the state and num_balls_per_tube as NumPy arrays
         self.state = np.zeros((self.num_tubes, self.tube_capacity), dtype=np.int8)
         self.num_balls_per_tube = np.zeros(self.num_tubes, dtype=np.int8)
+
+        # initialize state related variables
+        self.state_key = None
         self.state_history = defaultdict(int)
+        self.state_dcount_history = deque(maxlen=1000)
         self.out_of_moves = False
         self.is_in_recursive_moves = False
+        self.done = False
 
         # Initialize the Cython environment with memory views
         self._env = C_BallSortEnv(
@@ -60,8 +65,11 @@ class BallSortEnv:
 
         # update state_key and out_of_moves
         self.state_key = hash_state(self.state)
+        self.state_history[self.state_key] += 1
+        self.state_dcount_history.append(len(self.state_history.keys()))
         self.out_of_moves = False
         self.is_in_recursive_moves = False
+        self.done = False
 
     def is_valid_state(self, state: np.ndarray) -> Tuple[bool, str]:
         # Check shape
@@ -105,6 +113,7 @@ class BallSortEnv:
 
     def move(self, src: int, dst: int) -> None:
         self.state_history[self.state_key] += 1
+        self.state_dcount_history.append(len(self.state_history.keys()))
         self._env.move(src, dst)
         self.state_key = hash_state(self.state)
         self.update_num_balls_per_tube()
@@ -113,6 +122,7 @@ class BallSortEnv:
         self.state_history[self.state_key] -= 1
         if self.state_history[self.state_key] == 0:
             del self.state_history[self.state_key]
+        self.state_dcount_history.pop()
         self._env.undo_move(src, dst)
         self.state_key = hash_state(self.state)
 
@@ -130,7 +140,10 @@ class BallSortEnv:
         return valid_actions
 
     def is_solved(self) -> bool:
-        return self._env.is_solved()
+        is_solved = self._env.is_solved()
+        if is_solved:
+            self.done = True
+        return is_solved
 
     def is_moved(self) -> bool:
         return self._env.is_moved()
