@@ -28,11 +28,11 @@ if __name__ == "__main__":
     max_num_colors = 12
     num_empty_tubes = 2
     max_number_tubes = max_num_colors + num_empty_tubes
-    n_envs = 64
+    n_envs = 8
     previous_model_path = None
 
     train_game_size = [
-        {"num_colors": 4, "capacity": 4, "episodes": 100},
+        {"num_colors": 4, "capacity": 4, "episodes": 2},
         # {"num_colors": 5, "capacity": 4, "episodes": 150},
         # {"num_colors": 6, "capacity": 4, "episodes": 150},
         # {"num_colors": 7, "capacity": 4, "episodes": 150},
@@ -58,7 +58,7 @@ if __name__ == "__main__":
 
         envs = [BallSortEnv(num_colors, tube_capacity, num_empty_tubes) for _ in range(n_envs)]
 
-        agent = AlphaSortAgent(num_colors, max_num_colors, max_tube_capacity, device, batch_size=64)
+        agent = AlphaSortAgent(num_colors, max_num_colors, max_tube_capacity, device, batch_size=8)
 
         # Create a fresh or shared agent (shared helps retain learning across stages)
         if previous_model_path is not None:

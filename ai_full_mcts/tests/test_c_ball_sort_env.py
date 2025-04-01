@@ -18,8 +18,7 @@ def env():
         [0, 0, 0, 0],
         [0, 0, 0, 0],
     ], dtype=np.int8)
-    num_balls_per_tube = np.array([4, 4, 4, 4, 0, 0], dtype=np.int8)
-    return C_BallSortEnv(tube_capacity=4, num_colors=4, num_empty_tubes=2, state=state, num_balls_per_tube=num_balls_per_tube)
+    return C_BallSortEnv(tube_capacity=4, num_colors=4, num_empty_tubes=2, state=state)
 
 @pytest.fixture
 def solved_env():
@@ -31,8 +30,7 @@ def solved_env():
         [0, 0, 0, 0],
         [0, 0, 0, 0],
     ], dtype=np.int8)
-    num_balls_per_tube = np.array([4, 4, 4, 4, 0, 0], dtype=np.int8)
-    return C_BallSortEnv(tube_capacity=4, num_colors=4, num_empty_tubes=2, state=state, num_balls_per_tube=num_balls_per_tube)
+    return C_BallSortEnv(tube_capacity=4, num_colors=4, num_empty_tubes=2, state=state)
 
 @pytest.fixture
 def imbalanced_env():
@@ -44,8 +42,7 @@ def imbalanced_env():
         [1, 1, 0, 0],
         [0, 0, 0, 0],
     ], dtype=np.int8)
-    num_balls_per_tube = np.array([3, 3, 4, 4, 2, 0], dtype=np.int8)
-    return C_BallSortEnv(tube_capacity=4, num_colors=4, num_empty_tubes=2, state=state, num_balls_per_tube=num_balls_per_tube)
+    return C_BallSortEnv(tube_capacity=4, num_colors=4, num_empty_tubes=2, state=state)
 
 def test_top_index(env, imbalanced_env):
     for i in range(4):
@@ -112,13 +109,9 @@ def test_get_state(env):
     ], dtype=np.int8)
     np.testing.assert_array_equal(state, expected_state)
 
-def test_num_balls_per_tube(env, imbalanced_env):
-    """Test that num_balls_per_tube is updated correctly."""
-    assert np.array_equal(env.get_num_balls_per_tube(), np.array([4, 4, 4, 4, 0, 0], dtype=np.int8))
-    assert np.array_equal(imbalanced_env.get_num_balls_per_tube(), np.array([3, 3, 4, 4, 2, 0], dtype=np.int8))
 
 def test_move(env):
-    """Test the move method and its effect on state and num_balls_per_tube."""
+    """Test the move method and its effect on state."""
     env.move(1, 4)  # Move from tube 0 to tube 4
     expected_state = np.array([
         [1, 1, 1, 1],
@@ -128,13 +121,9 @@ def test_move(env):
         [2, 0, 0, 0],
         [0, 0, 0, 0],
     ], dtype=np.int8)
-    expected_num_balls = np.array([4, 3, 4, 4, 1, 0], dtype=np.int8)
 
     # Check state
     np.testing.assert_array_equal(env.get_state(), expected_state)
-
-    # Check num_balls_per_tube
-    assert np.array_equal(env.get_num_balls_per_tube(), expected_num_balls)
     assert env.get_move_count() == 1
     assert env.is_moved() == 1
 
@@ -225,17 +214,14 @@ def test_reset(env):
     assert env.get_move_count() == 0
 
 def test_undo_move(env):
-    """Test the undo_move method and its effect on state and num_balls_per_tube."""
-    # Initial state and num_balls_per_tube
+    """Test the undo_move method and its effect on state."""
+    # Initial state
     initial_state = env.get_state().copy()
-    initial_num_balls = env.get_num_balls_per_tube().copy()
 
     # Perform a move
     env.move(1, 4)  # Move from tube 1 to tube 4
     moved_state = env.get_state().copy()
-    moved_num_balls = env.get_num_balls_per_tube().copy()
     assert not np.array_equal(moved_state, initial_state)
-    assert not np.array_equal(moved_num_balls, initial_num_balls)
     assert env.get_move_count() == 1
     assert env.is_moved() == 1
 
@@ -243,6 +229,5 @@ def test_undo_move(env):
     env.undo_move(1, 4)
     assert env.is_moved() == 1
     assert np.array_equal(env.get_state(), initial_state)
-    assert np.array_equal(env.get_num_balls_per_tube(), initial_num_balls)
     assert env.get_move_count() == 0
     assert env.is_moved() == 1

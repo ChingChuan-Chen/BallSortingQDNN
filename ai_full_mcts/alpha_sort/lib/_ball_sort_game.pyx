@@ -6,7 +6,6 @@ from cython cimport boundscheck, wraparound
 
 cdef class C_BallSortEnv:
     cdef np.int8_t[:, ::1] state  # Memory view for state
-    cdef np.int8_t[:] num_balls_per_tube  # Memory view for number of balls in each tube
     cdef int tube_capacity
     cdef int num_colors
     cdef int num_empty_tubes
@@ -15,7 +14,7 @@ cdef class C_BallSortEnv:
     cdef bint moved
     cdef bint solved
 
-    def __init__(self, int tube_capacity, int num_colors, int num_empty_tubes, np.ndarray[np.int8_t, ndim=2] state, np.ndarray[np.int8_t] num_balls_per_tube):
+    def __init__(self, int tube_capacity, int num_colors, int num_empty_tubes, np.ndarray[np.int8_t, ndim=2] state):
         self.tube_capacity = tube_capacity
         self.num_colors = num_colors
         self.num_empty_tubes = num_empty_tubes
@@ -24,9 +23,8 @@ cdef class C_BallSortEnv:
         self.moved = 1
         self.solved = 0
 
-        # Allocate memory for state and num_balls_per_tube
+        # Allocate memory for state
         self.state = state
-        self.num_balls_per_tube = num_balls_per_tube
 
     def reset(self):
         self.moved = 1
@@ -36,7 +34,10 @@ cdef class C_BallSortEnv:
     def top_index(self, tube_idx: int) -> int:
         if tube_idx < 0 or tube_idx >= self.num_tubes:
             return -1
-        return self.num_balls_per_tube[tube_idx] - 1
+        for i in range(self.tube_capacity-1, -1, -1):
+            if self.state[tube_idx, i] > 0:
+                return i
+        return -1
 
     def get_top_color_streak(self, tube_idx: int) -> int:
         cdef int top_idx = self.top_index(tube_idx)
@@ -54,12 +55,12 @@ cdef class C_BallSortEnv:
     def is_full_tube(self, tube_idx: int) -> bint:
         if tube_idx < 0 or tube_idx >= self.num_tubes:
             return 0
-        return self.num_balls_per_tube[tube_idx] == self.tube_capacity
+        return self.top_index(tube_idx) == self.tube_capacity-1
 
     def is_empty_tube(self, tube_idx: int) -> bint:
         if tube_idx < 0 or tube_idx >= self.num_tubes:
             return 0
-        return self.num_balls_per_tube[tube_idx] == 0
+        return self.top_index(tube_idx) == -1
 
     def is_completed_tube(self, tube_idx: int) -> bint:
         if self.is_full_tube(tube_idx) == 0:
@@ -134,10 +135,6 @@ cdef class C_BallSortEnv:
         self.state[dst, dst_top_idx + 1] = self.state[src, src_top_idx]
         self.state[src, src_top_idx] = 0
 
-        # Update the number of balls in each tube
-        self.num_balls_per_tube[src] -= 1
-        self.num_balls_per_tube[dst] += 1
-
         # Update the moved flag and move count
         self.moved = 1
         self.move_count += 1
@@ -151,19 +148,12 @@ cdef class C_BallSortEnv:
         self.state[src, src_top_idx + 1] = self.state[dst, dst_top_idx]
         self.state[dst, dst_top_idx] = 0
 
-        # Update the number of balls in each tube
-        self.num_balls_per_tube[src] += 1
-        self.num_balls_per_tube[dst] -= 1
-
         # Update the moved flag and move count
         self.moved = 1
         self.move_count -= 1
 
     def get_state(self) -> np.ndarray:
         return np.array(self.state, copy=True)
-
-    def get_num_balls_per_tube(self) -> np.ndarray:
-        return np.array(self.num_balls_per_tube, copy=True)
 
     def get_move_count(self) -> int:
         return self.move_count

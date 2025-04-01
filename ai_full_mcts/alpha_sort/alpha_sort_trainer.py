@@ -119,11 +119,8 @@ class AlphaSortTrainer:
                 for action, action_idx in zip(valid_actions_loop, valid_action_indices_loop):
                     sim_env = current_env.env.clone()
                     src, dst = action
-                    if current_env.env.is_valid_move(src, dst):
-                        sim_env.move(src, dst)
-                        reward = self.compute_action_reward(sim_env, src, dst)
-                    else:
-                        reward = -150.0 / self.hard_factor
+                    sim_env.move(src, dst)
+                    reward = self.compute_action_reward(sim_env, src, dst)
 
                     next_env_action_idx = action_idx if current_env.depth == 0 else current_env.action_idx
                     next_env_list.append(
@@ -135,18 +132,27 @@ class AlphaSortTrainer:
 
             # Run parallel environment processing
             mcts_start_time = time.time_ns()
-            with ThreadPoolExecutor() as executor:
-                futures = [
-                    executor.submit(
-                        process_env,
-                        current_env,
-                        current_env.env.valid_actions,
-                        np.array([self.action_to_index[action] for action in current_env.env.valid_actions]),
-                        probs[idx]
-                    )
-                    for idx, current_env in enumerate(current_env_list)
-                ]
-                next_env_list = list(itertools.chain.from_iterable(future.result() for future in futures))
+            # with ThreadPoolExecutor() as executor:
+            #     futures = [
+            #         executor.submit(
+            #             process_env,
+            #             current_env,
+            #             current_env.env.valid_actions,
+            #             np.array([self.action_to_index[action] for action in current_env.env.valid_actions]),
+            #             probs[idx]
+            #         )
+            #         for idx, current_env in enumerate(current_env_list)
+            #     ]
+            #     next_env_list = list(itertools.chain.from_iterable(future.result() for future in futures))
+            next_env_list = list(itertools.chain.from_iterable(
+                process_env(
+                    current_env,
+                    current_env.env.valid_actions,
+                    np.array([self.action_to_index[action] for action in current_env.env.valid_actions]),
+                    probs[idx]
+                )
+                for idx, current_env in enumerate(current_env_list)
+            ))
             mcts_time += time.time_ns() - mcts_start_time
 
             for idx, next_env in enumerate(next_env_list):
@@ -227,19 +233,14 @@ class AlphaSortTrainer:
                 continue
 
             src, dst = actions[i]
-            if not env.is_valid_move(src, dst):
-                env.is_out_of_moves = True
-                rewards[i] = -200.0 / self.hard_factor
+            env.move(src, dst)
+            if self._check_recursive_moves(env):
+                env.is_in_recursive_moves = True
+                rewards[i] = -250.0 / self.hard_factor
                 step_dones[i] = True
             else:
-                env.move(src, dst)
-                if self._check_recursive_moves(env):
-                    env.is_in_recursive_moves = True
-                    rewards[i] = -250.0 / self.hard_factor
-                    step_dones[i] = True
-                else:
-                    rewards[i] += self.compute_action_reward(env, src, dst)
-                    step_dones[i] = env.is_solved
+                rewards[i] += self.compute_action_reward(env, src, dst)
+                step_dones[i] = env.is_solved
         next_states = np.array([env.state.copy() for env in self.envs])
         return states, next_states, rewards, step_dones
 

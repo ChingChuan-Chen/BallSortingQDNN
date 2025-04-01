@@ -27,11 +27,9 @@ def test_reset(env):
     filled_tubes = env.num_tubes - env.num_empty_tubes
     for i in range(filled_tubes):
         assert np.all(env.state[i] > 0)  # Filled tubes should have balls
-        assert env.num_balls_per_tube[i] == env.tube_capacity
 
     for i in range(filled_tubes, env.num_tubes):
         assert np.all(env.state[i] == 0)  # Empty tubes should have no balls
-        assert env.num_balls_per_tube[i] == 0
 
     # validate Cython environment
     assert env.is_solved == False
@@ -80,46 +78,15 @@ def test_is_valid_state(env):
     assert reason == "the total number of balls is incorrect"
 
 
-def test_update_num_balls_per_tube(env):
-    """Test the update_num_balls_per_tube method."""
-    state = np.array([
-        [1, 1, 1, 1],
-        [2, 2, 2, 0],
-        [3, 3, 0, 0],
-        [4, 0, 0, 0],
-        [0, 0, 0, 0],
-        [0, 0, 0, 0],
-    ], dtype=np.int8)
-    env.state = state
-    env.update_num_balls_per_tube()
-
-    # Validate num_balls_per_tube
-    expected_num_balls = [4, 3, 2, 1, 0, 0]
-    assert np.array_equal(env.num_balls_per_tube, expected_num_balls)
-
-
 def test_memory_view_access(env):
-    """Test if state and num_balls_per_tube are accessed by C_BallSortEnv with memory view."""
-    # do a move and update num_balls_per_tube. Then check if the num_balls_per_tube is updated
-    env.move(0, 5)
-    env.update_num_balls_per_tube()
-    assert env._env.get_num_balls_per_tube()[0] == 3
-    assert env._env.get_num_balls_per_tube()[5] == 1
-
-    # Modify state and num_balls_per_tube directly
     env.state[0, 0] = 99
-    env.num_balls_per_tube[0] = 111
-
-    # Access state and num_balls_per_tube from C_BallSortEnv
     assert env._env.get_state()[0, 0] == 99
-    assert env._env.get_num_balls_per_tube()[0] == 111
 
 
 def test_clone(env):
     # Set up the initial state
     env.reset()
     env.move(0, 5)  # Perform a move to modify the state
-    env.update_num_balls_per_tube()
 
     # Clone the environment
     cloned_env = env.clone()
@@ -131,13 +98,10 @@ def test_clone(env):
 
     # Validate that the cloned environment has the same state
     assert np.array_equal(env.state, cloned_env.state), "Cloned state does not match the original state."
-    assert np.array_equal(env.num_balls_per_tube, cloned_env.num_balls_per_tube), "Cloned num_balls_per_tube does not match the original."
 
     # Validate that the cloned environment is independent (deep copy)
     cloned_env.state[0, 0] = 99
-    cloned_env.num_balls_per_tube[0] = 111
     assert env.state[0, 0] != 99, "Original state was modified when changing the cloned state."
-    assert env.num_balls_per_tube[0] != 111, "Original num_balls_per_tube was modified when changing the cloned num_balls_per_tube."
 
     # Validate that the cloned environment's move count matches the original
     assert env.get_move_count() == cloned_env.get_move_count(), "Move count does not match between original and cloned environments."
@@ -147,7 +111,6 @@ def test_clone(env):
 
     # Validate that the environment's move count is updated correctly and independently
     env.move(0, 4)  # Perform another move in the original environment
-    env.update_num_balls_per_tube()
     assert env.get_move_count() != cloned_env.get_move_count(), "Move count should not match after modifying the original environment."
 
 
