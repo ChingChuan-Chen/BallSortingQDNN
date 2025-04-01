@@ -71,7 +71,10 @@ class AlphaSortTrainer:
 
         probs_time = 0.0
         mcts_time = 0.0
-        for _ in range(mcts_depth+1):
+        num_envs_in_depth = defaultdict(int)
+        for dd in range(mcts_depth+1):
+            num_envs_in_depth[dd] += len(current_env_list)
+
             state_inputs = []
             for idx, current_env in enumerate(current_env_list):
                 state_inputs.append(self.state_encode_helper(current_env.env.state))
@@ -121,6 +124,7 @@ class AlphaSortTrainer:
                         reward = self.compute_action_reward(sim_env, src, dst)
                     else:
                         reward = -150.0 / self.hard_factor
+
                     next_env_action_idx = action_idx if current_env.depth == 0 else current_env.action_idx
                     next_env_list.append(
                         CurrentEnv(
@@ -149,11 +153,12 @@ class AlphaSortTrainer:
                 action_rewards[next_env.original_env_idx][next_env.action_idx] += next_env.reward * discount_factor ** next_env.depth
 
             current_env_list = []
-            for idx, current_env in enumerate(next_env_list):
-                if current_env.env is None or len(current_env.env.valid_actions) == 0:
-                    continue
-                if not current_env.env.is_done:
-                    current_env_list.append(current_env)
+            if dd < mcts_depth:
+                for idx, current_env in enumerate(next_env_list):
+                    if current_env.env is None or len(current_env.env.valid_actions) == 0:
+                        continue
+                    if not current_env.env.is_done:
+                        current_env_list.append(current_env)
 
         action_indices = []
         for env_idx, env in enumerate(self.envs):
@@ -162,7 +167,7 @@ class AlphaSortTrainer:
             else:
                 action_indices.append(max(action_rewards[env_idx].items(), key=lambda x: x[1])[0])
 
-        return action_indices, probs_time, mcts_time
+        return action_indices, probs_time, mcts_time, num_envs_in_depth
 
     def compute_action_reward(self, env, src: int, dst: int) -> float:
         reward = -35.0 / self.hard_factor
@@ -254,7 +259,7 @@ class AlphaSortTrainer:
                     step_dones[i]
                 )
 
-    def logging_progress(self, episode, step_count, total_rewards, cum_time_dict):
+    def logging_progress(self, episode, step_count, total_rewards, cum_time_dict, num_envs_in_depth):
         solved_envs_count = np.sum([env.is_solved for env in self.envs])
         unsolved_envs_count = self.num_envs - solved_envs_count
         solve_rate = solved_envs_count / self.num_envs
@@ -279,6 +284,8 @@ class AlphaSortTrainer:
             f"| Train step: {cum_time_dict["train_step"] / 10**9:.2f} seconds "
             f"| Update target network: {cum_time_dict["update_target_network"] / 10**9:.2f} seconds"
         )
+        for depth, count in num_envs_in_depth.items():
+            self.logger.info(f"Episode {episode: 03d} | Depth {depth} | Number of environments: {count / step_count:.2f}")
 
     def train(self, num_episodes, mcts_depth=3, top_k=7, discount_factor=0.9, train_steps_per_move=2):
         recent_results = deque(maxlen=10)
@@ -294,24 +301,20 @@ class AlphaSortTrainer:
             self.logger.info(f"Episode {episode: 03d} | Start training for Episode {episode: 03d}")
 
             # Initialize variables for tracking time
-            cum_time_dict = {
-                "select_actions": 0.0,
-                "compute_rewards": 0.0,
-                "train_step": 0.0,
-                "update_target_network": 0.0,
-                "probs_time": 0.0,
-                "mcts_time": 0.0,
-            }
+            cum_time_dict = defaultdict(float)
+            num_envs_in_depth = defaultdict(int)
             while step_count < self.max_step_count:
-                if step_count > 0 and step_count % 20 == 0:
-                    self.logging_progress(episode, step_count, total_rewards, cum_time_dict)
+                if step_count > 0 and step_count % 10 == 0:
+                    self.logging_progress(episode, step_count, total_rewards, cum_time_dict, num_envs_in_depth)
 
                 # Get valid actions and select actions for each environment
                 select_actions_start = time.time_ns()
-                action_indices, probs_time, mcts_time = self.select_actions(mcts_depth, top_k, discount_factor)
+                action_indices, probs_time, mcts_time, num_envs_in_depth_output = self.select_actions(mcts_depth, top_k, discount_factor)
                 cum_time_dict["select_actions"] += time.time_ns() - select_actions_start
                 cum_time_dict["probs_time"] += probs_time
                 cum_time_dict["mcts_time"] += mcts_time
+                for depth, count in num_envs_in_depth_output.items():
+                    num_envs_in_depth[depth] += count
 
                 # Map action indices to actions
                 actions = [self.index_to_action[idx] if idx is not None else (-1, -1) for idx in action_indices]
@@ -359,7 +362,7 @@ class AlphaSortTrainer:
             recent_results.append(solved_envs_count / self.num_envs)
 
             elapsed_seconds = (datetime.datetime.now() - start_time).total_seconds()
-            self.logging_progress(episode, step_count, total_rewards, cum_time_dict)
+            self.logging_progress(episode, step_count, total_rewards, cum_time_dict, num_envs_in_depth)
             self.logger.info(
                 f"Episode {episode: 03d} | Last 10 Solve Rate: {np.mean(recent_results) * 100: 6.1f}% "
                 f"| Avg. Solve Steps: {avg_solve_step: 6.1f} "
