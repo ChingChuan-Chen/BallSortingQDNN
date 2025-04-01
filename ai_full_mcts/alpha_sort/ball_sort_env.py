@@ -21,10 +21,19 @@ class BallSortEnv:
         # initialize state related variables
         self.state_key = None
         self.state_history = defaultdict(int)
-        self.state_dcount_history = deque(maxlen=1000)
-        self.out_of_moves = False
+        self.recent_state_keys = deque(maxlen=20)
+        self.is_out_of_moves = False
         self.is_in_recursive_moves = False
-        self.done = False
+        self.is_done = False
+        self.is_solved = False
+        self.valid_actions = None
+
+        if state is not None:
+            is_valid, reason = self.is_valid_state(state)
+            if not is_valid:
+                raise ValueError(f"State is invalid since {reason}.")
+            self.state = state
+            self.state_key = hash_state(self.state)
 
         # Initialize the Cython environment with memory views
         self._env = C_BallSortEnv(
@@ -36,14 +45,17 @@ class BallSortEnv:
         )
 
         if state is not None:
-            is_valid, reason = self.is_valid_state(state)
-            if not is_valid:
-                raise ValueError(f"State is invalid since {reason}.")
-            self.state = state
-            self.state_key = hash_state(self.state)
-            self.update_num_balls_per_tube()
+            self.reset_state()
         else:
             self.reset()
+
+    def reset_state(self):
+        self.state_key = hash_state(self.state)
+        self.valid_actions = self._env.get_valid_actions()
+        self.is_out_of_moves = len(self.valid_actions) == 0
+        self.is_solved = self._env.is_solved()
+        self.is_done |= self.is_solved
+        self.update_num_balls_per_tube()
 
     def reset(self):
         # Reset the Cython environment
@@ -63,13 +75,14 @@ class BallSortEnv:
             self.state[i, :] = balls[i * self.tube_capacity:(i + 1) * self.tube_capacity]
             self.num_balls_per_tube[i] = self.tube_capacity
 
-        # update state_key and out_of_moves
-        self.state_key = hash_state(self.state)
-        self.state_history[self.state_key] += 1
-        self.state_dcount_history.append(len(self.state_history.keys()))
-        self.out_of_moves = False
+        # update state_key and other state-related variables
+        self.reset_state()
+        self.state_history.clear()
+        self.state_history[self.state_key] = 1
+        self.recent_state_keys.clear()
+        self.is_done = False
         self.is_in_recursive_moves = False
-        self.done = False
+        self._env.set_move_count(0)
 
     def is_valid_state(self, state: np.ndarray) -> Tuple[bool, str]:
         # Check shape
@@ -113,18 +126,18 @@ class BallSortEnv:
 
     def move(self, src: int, dst: int) -> None:
         self.state_history[self.state_key] += 1
-        self.state_dcount_history.append(len(self.state_history.keys()))
+        self.recent_state_keys.append(self.state_key)
         self._env.move(src, dst)
-        self.state_key = hash_state(self.state)
-        self.update_num_balls_per_tube()
+        self.reset_state()
 
     def undo_move(self, src: int, dst: int) -> None:
         self.state_history[self.state_key] -= 1
         if self.state_history[self.state_key] == 0:
             del self.state_history[self.state_key]
-        self.state_dcount_history.pop()
+        self.recent_state_keys.pop()
         self._env.undo_move(src, dst)
         self.state_key = hash_state(self.state)
+        self.reset_state()
 
     def get_move_count(self) -> int:
         return self._env.get_move_count()
@@ -132,18 +145,17 @@ class BallSortEnv:
     def is_valid_move(self, src: int, dst: int) -> bool:
         return self._env.is_valid_move(src, dst)
 
-    def get_valid_actions(self) -> List[Tuple[int, int]]:
-        valid_actions = self._env.get_valid_actions()
-        if len(valid_actions) == 0:
-            self.out_of_moves = True
-            return []
-        return valid_actions
+    def clone(self):
+        new_env = BallSortEnv(
+            num_colors=self.num_colors,
+            tube_capacity=self.tube_capacity,
+            num_empty_tubes=self.num_empty_tubes,
+            state=self.state.copy()
+        )
+        new_env.state_history = defaultdict(int, self.state_history)
+        new_env.recent_state_keys = deque(self.recent_state_keys, maxlen=1000)
+        new_env.is_done = self.is_done
+        new_env.reset_state()
+        new_env._env.set_move_count(self.get_move_count())
 
-    def is_solved(self) -> bool:
-        is_solved = self._env.is_solved()
-        if is_solved:
-            self.done = True
-        return is_solved
-
-    def is_moved(self) -> bool:
-        return self._env.is_moved()
+        return new_env

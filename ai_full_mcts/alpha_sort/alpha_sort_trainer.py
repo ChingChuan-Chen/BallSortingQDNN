@@ -4,7 +4,8 @@ import random
 import datetime
 import logging
 import itertools
-from collections import deque, defaultdict
+from collections import deque, defaultdict, namedtuple
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 import torch
@@ -13,6 +14,10 @@ from joblib import Parallel, delayed
 from alpha_sort.ball_sort_env import BallSortEnv
 from alpha_sort.utils import save_model, hash_state
 from alpha_sort.lib._state_utils import state_encode, state_decode
+
+
+CurrentEnv = namedtuple('CurrentEnv', ['env', 'depth', 'reward', 'original_env_idx', 'action_idx'])
+
 
 class AlphaSortTrainer:
     def __init__(self, envs, agent, max_num_colors, max_tube_capacity):
@@ -55,161 +60,149 @@ class AlphaSortTrainer:
             self.max_tube_capacity
         )
 
-    def select_actions(self, all_valid_actions, mcts_depth):
-        action_indices = []
-        for env_idx, env in enumerate(self.envs):
-            if env.done or len(all_valid_actions[env_idx]) == 0:
-                action_indices.append(None)
+    def select_actions(self, mcts_depth, top_k, discount_factor=0.9):
+        # Initialize the list of current environments and their corresponding rewards
+        current_env_list = []
+        for i, env in enumerate(self.envs):
+            if env.is_done or len(env.valid_actions) == 0:
                 continue
+            current_env_list.append(CurrentEnv(env.clone(), 0, 0.0, i, 0))
+        action_rewards = [defaultdict(float) for _ in range(self.num_envs)]
 
-            # Get valid actions for the current environment
-            valid_actions = all_valid_actions[env_idx]
+        probs_time = 0.0
+        mcts_time = 0.0
+        for _ in range(mcts_depth+1):
+            state_inputs = []
+            for idx, current_env in enumerate(current_env_list):
+                state_inputs.append(self.state_encode_helper(current_env.env.state))
 
-            # Use MCTS to select the best action
-            best_action = self.mtcs_search(
-                state=env.state.copy(),
-                state_history=env.state_history.copy(),
-                state_dcount_history=env.state_dcount_history.copy(),
-                valid_actions=valid_actions,
-                mcts_depth=mcts_depth
-            )
+            assert len(state_inputs) == len(current_env_list), "State inputs and current environment list length mismatch."
 
-            # Convert the selected action to its index
-            action_indices.append(self.action_to_index[best_action])
+            if not state_inputs:
+                break
 
-        return action_indices
+            # Batch policy network inference
+            probs_start_time = time.time_ns()
+            with torch.no_grad():
+                logits = self.agent.policy_net(torch.tensor(np.array(state_inputs), dtype=torch.float32).to(self.agent.device))
+                probs = F.softmax(logits, dim=1).cpu().numpy()
+            probs_time += time.time_ns() - probs_start_time
 
-    def mtcs_search(self, state, state_history, state_dcount_history, valid_actions, mcts_depth, discount_factor=0.9):
-        if len(valid_actions) == 0:
-            # If no valid actions, return None
-            return None
-
-        # Initialize cumulative rewards for each action
-        action_rewards = {action: 0.0 for action in valid_actions}
-
-        # Simulate the environment for each action
-        for action in valid_actions:
-            simulated_env = BallSortEnv(
-                num_colors=self.num_colors,
-                tube_capacity=self.tube_capacity,
-                num_empty_tubes=self.num_empty_tubes,
-                state=state.copy()
-            )
-            src, dst = action
-            if simulated_env.is_valid_move(src, dst):
-                simulated_env.move(src, dst)
-                immediate_reward = self.compute_action_reward(simulated_env, src, dst, state_history, state_dcount_history)
-            else:
-                immediate_reward = -150.0 / self.hard_factor  # Penalty for invalid moves
-
-            # Initialize cumulative reward for this action
-            cumulative_reward = immediate_reward
-
-            # Iteratively explore deeper levels
-            for depth in range(1, mcts_depth + 1):
-                # Get valid actions for the current state
-                next_valid_actions = simulated_env.get_valid_actions()
-                if len(next_valid_actions) == 0:
-                    break
-
-                # Use the policy network to estimate Q-values or probabilities
-                with torch.no_grad():
-                    action_logits_nn_output = self.agent.policy_net(torch.tensor(np.array([self.state_encode_helper(simulated_env.state)]), dtype=torch.float32).to(self.agent.device))
-                    probs = F.softmax(action_logits_nn_output, dim=0).detach().cpu().numpy().flatten()
-
-                # # Mask invalid actions
-                masked_probs = np.zeros_like(probs)
-                valid_action_indices = [self.action_to_index[action] for action in next_valid_actions]
-                masked_probs[valid_action_indices] = probs[valid_action_indices]
-                if masked_probs.sum() == 0 or np.sum(masked_probs >= 1e-2) < 3:
+            # Define per-environment processing
+            def process_env(current_env, valid_actions, valid_action_indices, prob):
+                masked_probs = np.zeros_like(prob)
+                masked_probs[valid_action_indices] = prob[valid_action_indices]
+                if masked_probs.sum() == 0:
                     masked_probs[valid_action_indices] = 1.0 / len(valid_action_indices)
                 else:
                     masked_probs /= masked_probs.sum()
 
-                # Evaluate rewards for all valid actions
-                next_action_rewards = []
-                for next_action in next_valid_actions:
-                    next_src, next_dst = next_action
-                    if simulated_env.is_valid_move(next_src, next_dst):
-                        simulated_env.move(next_src, next_dst)
-                        reward = self.compute_action_reward(simulated_env, next_src, next_dst, state_history, state_dcount_history) * discount_factor ** depth
-                        next_action_rewards.append((reward, next_action))
-                        simulated_env.undo_move(next_src, next_dst)  # Undo the move to restore the state
-                    else:
-                        next_action_rewards.append((-150.0 / self.hard_factor, next_action))  # Penalty for invalid moves
-
-                # Simulate the best action
-                best_next_action = max(next_action_rewards, key=lambda x: x[0] * masked_probs[self.action_to_index[x[1]]])[1]
-
-                # Simulate the selected action
-                best_src, best_dst = best_next_action
-                if simulated_env.is_valid_move(best_src, best_dst):
-                    simulated_env.move(best_src, best_dst)
-                    reward = self.compute_action_reward(simulated_env, best_src, best_dst, state_history, state_dcount_history) * discount_factor ** depth
+                valid_action_indices_loop = []
+                valid_actions_loop = []
+                if top_k > 0 and len(valid_action_indices) > top_k:
+                    top_k_indices = self.rng.choice(valid_action_indices, top_k, replace=False, p=masked_probs[valid_action_indices])
+                    for action, action_idx in zip(valid_actions, valid_action_indices):
+                        if action_idx in top_k_indices:
+                            valid_action_indices_loop.append(action_idx)
+                            valid_actions_loop.append(action)
+                        else:
+                            masked_probs[action_idx] = 0.0
+                    masked_probs /= masked_probs.sum()
                 else:
-                    reward = -150.0 / self.hard_factor  # Penalty for invalid moves
+                    valid_action_indices_loop = valid_action_indices
+                    valid_actions_loop = valid_actions
 
-                # Add the reward to the cumulative reward
-                cumulative_reward += reward
+                next_env_list = []
+                for action, action_idx in zip(valid_actions_loop, valid_action_indices_loop):
+                    sim_env = current_env.env.clone()
+                    src, dst = action
+                    if current_env.env.is_valid_move(src, dst):
+                        sim_env.move(src, dst)
+                        reward = self.compute_action_reward(sim_env, src, dst)
+                    else:
+                        reward = -150.0 / self.hard_factor
+                    next_env_action_idx = action_idx if current_env.depth == 0 else current_env.action_idx
+                    next_env_list.append(
+                        CurrentEnv(
+                            sim_env, current_env.depth + 1, reward * masked_probs[action_idx], current_env.original_env_idx, next_env_action_idx
+                        )
+                    )
+                return next_env_list
 
-            # Store the cumulative reward for the action
-            action_rewards[action] = cumulative_reward
+            # Run parallel environment processing
+            mcts_start_time = time.time_ns()
+            with ThreadPoolExecutor() as executor:
+                futures = [
+                    executor.submit(
+                        process_env,
+                        current_env,
+                        current_env.env.valid_actions,
+                        np.array([self.action_to_index[action] for action in current_env.env.valid_actions]),
+                        probs[idx]
+                    )
+                    for idx, current_env in enumerate(current_env_list)
+                ]
+                next_env_list = list(itertools.chain.from_iterable(future.result() for future in futures))
+            mcts_time += time.time_ns() - mcts_start_time
 
-        # Select the action with the highest cumulative reward
-        best_action = max(action_rewards.items(), key=lambda x: x[1])[0]
+            for idx, next_env in enumerate(next_env_list):
+                action_rewards[next_env.original_env_idx][next_env.action_idx] += next_env.reward * discount_factor ** next_env.depth
 
-        return best_action
+            current_env_list = []
+            for idx, current_env in enumerate(next_env_list):
+                if current_env.env is None or len(current_env.env.valid_actions) == 0:
+                    continue
+                if not current_env.env.is_done:
+                    current_env_list.append(current_env)
 
-    def compute_action_reward(self, env, src: int, dst: int, state_history=None, state_dcount_history=None) -> float:
-        reward = -25.0 / self.hard_factor
+        action_indices = []
+        for env_idx, env in enumerate(self.envs):
+            if env.is_done or len(action_rewards[env_idx]) == 0:
+                action_indices.append(None)
+            else:
+                action_indices.append(max(action_rewards[env_idx].items(), key=lambda x: x[1])[0])
 
-        if env.is_solved():
+        return action_indices, probs_time, mcts_time
+
+    def compute_action_reward(self, env, src: int, dst: int) -> float:
+        reward = -35.0 / self.hard_factor
+        if env.is_solved:
             return self.hard_factor * 10.0
-
         reward += self._compute_tube_rewards(env, src, dst)
-        # reward += self._compute_state_history_penalty(env, state_history, state_dcount_history)
-
+        reward += self._compute_state_history_penalty(env)
         return reward
 
     def _compute_tube_rewards(self, env, src: int, dst: int) -> float:
         dst_top_color_streak = env.get_top_color_streak(dst)
-        complete_tube_reward = self.tube_capacity * self.num_colors / self.num_tubes * 2.0
-        streak_base_reward = complete_tube_reward / self.tube_capacity / 2.0
         reward = 0.0
-
         if env.is_completed_tube(dst):
-            reward += complete_tube_reward
+            reward += self.tube_capacity
         else:
-            reward += streak_base_reward / (self.tube_capacity - dst_top_color_streak)
+            if env.state_key not in env.state_history and dst_top_color_streak >= self.tube_capacity - 2:
+                if dst_top_color_streak == self.tube_capacity - 1:
+                    reward += self.tube_capacity / 2.0
+                elif dst_top_color_streak == self.tube_capacity - 2:
+                    reward += self.tube_capacity / 4.0
 
         src_top_color_streak = env.get_top_color_streak(src)
-        if src_top_color_streak < self.tube_capacity:
-            reward += streak_base_reward / (self.tube_capacity - src_top_color_streak)
-
+        if env.state_key not in env.state_history and src_top_color_streak >= self.tube_capacity - 2:
+            if src_top_color_streak == self.tube_capacity - 1:
+                reward += self.tube_capacity / 2.0
+            elif src_top_color_streak == self.tube_capacity - 2:
+                reward += self.tube_capacity / 4.0
         return reward
 
-    def _compute_state_history_penalty(self, env, state_history, state_dcount_history) -> float:
+    def _compute_state_history_penalty(self, env) -> float:
         penalty = 0.0
-
-        if state_history is None:
-            if env.state_history[env.state_key] >= self.num_tubes:
-                penalty -= 0.3 * (env.state_history[env.state_key] - self.num_tubes + 1)
-            if self._check_recursive_moves(env.state_key, env.state_history, env.state_dcount_history):
-                penalty -= 150.0 / self.hard_factor
-        else:
-            if state_history[env.state_key] >= self.num_tubes:
-                penalty -= 0.3 * (state_history[env.state_key] - self.num_tubes + 1)
-            if self._check_recursive_moves(env.state_key, env.state_history, state_dcount_history):
-                penalty -= 150.0 / self.hard_factor
-
+        if len(set(env.recent_state_keys)) < 6:
+            penalty -= 0.1 * env.get_move_count() / self.hard_factor
         return penalty
 
-    def _check_recursive_moves(self, state_key, state_history, state_dcount_history) -> bool:
-        if len(state_dcount_history) < self.trying_step_count:
-            return False
-        state_count = len(state_dcount_history)
-        last_k_counts = itertools.islice(state_dcount_history, state_count-self.trying_step_count, state_count)
-        if state_key in state_history and len(set(last_k_counts)) == 1 and state_dcount_history[-1] >= self.min_dcount_state:
+    def _check_recursive_moves(self, env) -> bool:
+        recursive_move_threshold = self.num_tubes * self.tube_capacity * 2
+        reach_threshold = env.state_history[env.state_key] >= recursive_move_threshold
+        count_reach_threshold = sum([1 for _, v in env.state_history.items() if v >= recursive_move_threshold])
+        if reach_threshold and count_reach_threshold >= 3:
             return True
         return False
 
@@ -219,7 +212,7 @@ class AlphaSortTrainer:
         step_dones = np.zeros(self.num_envs, dtype=bool)
 
         for i, env in enumerate(self.envs):
-            if env.done:
+            if env.is_done:
                 step_dones[i] = True
                 continue
 
@@ -230,24 +223,24 @@ class AlphaSortTrainer:
 
             src, dst = actions[i]
             if not env.is_valid_move(src, dst):
-                rewards[i] = -150.0 / self.hard_factor
+                env.is_out_of_moves = True
+                rewards[i] = -200.0 / self.hard_factor
                 step_dones[i] = True
             else:
                 env.move(src, dst)
-
-                # if self._check_recursive_moves(env.state_key, env.state_history, env.state_dcount_history):
-                #     env.is_in_recursive_moves = True
-                #     rewards[i] = -200.0 / self.hard_factor
-                #     step_dones[i] = True
-                # else:
-                rewards[i] += self.compute_action_reward(env, src, dst)
-                step_dones[i] = env.is_solved()
+                if self._check_recursive_moves(env):
+                    env.is_in_recursive_moves = True
+                    rewards[i] = -250.0 / self.hard_factor
+                    step_dones[i] = True
+                else:
+                    rewards[i] += self.compute_action_reward(env, src, dst)
+                    step_dones[i] = env.is_solved
         next_states = np.array([env.state.copy() for env in self.envs])
         return states, next_states, rewards, step_dones
 
     def store_transitions(self, states, action_indices, rewards, next_states, step_dones):
         for i, env in enumerate(self.envs):
-            if env.done:
+            if env.is_done:
                 continue
             encoded_state = self.state_encode_helper(states[i])
             if action_indices[i] is None:
@@ -261,7 +254,33 @@ class AlphaSortTrainer:
                     step_dones[i]
                 )
 
-    def train(self, num_episodes, mcts_depth=4, train_steps_per_move=2):
+    def logging_progress(self, episode, step_count, total_rewards, cum_time_dict):
+        solved_envs_count = np.sum([env.is_solved for env in self.envs])
+        unsolved_envs_count = self.num_envs - solved_envs_count
+        solve_rate = solved_envs_count / self.num_envs
+        avg_solve_reward = np.sum([total_rewards[i] for i in range(self.num_envs) if self.envs[i].is_solved]) / solved_envs_count if solved_envs_count > 0 else 0.0
+        avg_unsolved_reward = np.sum([total_rewards[i] for i in range(self.num_envs) if self.envs[i].is_solved == False]) / unsolved_envs_count if unsolved_envs_count > 0 else 0.0
+        out_of_move_rate = np.sum([1 for env in self.envs if env.is_solved == False and env.is_out_of_moves]) / self.num_envs
+        reach_recursive_moves_rate = np.sum([1 for env in self.envs if env.is_solved == False and env.is_in_recursive_moves]) / self.num_envs
+        done_rate = np.sum([1 for env in self.envs if env.is_done]) / self.num_envs
+        self.logger.info(
+            f"Episode {episode: 03d} | Step {step_count: 03d} | Solve Rate: {solve_rate * 100.0: 6.2f}% "
+            f"| Avg. Solve Rewards: {avg_solve_reward: 6.2f} | Avg. Unsolved Rewards: {avg_unsolved_reward: 6.2f} "
+            f"| Reach Recursive Moves Rate: {reach_recursive_moves_rate * 100.0: 6.2f}% "
+            f"| Out of Move Rate: {out_of_move_rate * 100.0: 6.2f}% | Done Rate: {done_rate * 100.0: 6.2f}%"
+        )
+
+        self.logger.info(
+            f"Episode {episode: 03d} | Elapsed Time "
+            f"| Torch Prob actions: {cum_time_dict["probs_time"] / 10**9:.2f} seconds "
+            f"| MCTS actions: {cum_time_dict["mcts_time"] / 10**9:.2f} seconds "
+            f"| Select actions: {cum_time_dict["select_actions"] / 10**9:.2f} seconds "
+            f"| Compute rewards: {cum_time_dict["compute_rewards"] / 10**9:.2f} seconds "
+            f"| Train step: {cum_time_dict["train_step"] / 10**9:.2f} seconds "
+            f"| Update target network: {cum_time_dict["update_target_network"] / 10**9:.2f} seconds"
+        )
+
+    def train(self, num_episodes, mcts_depth=3, top_k=7, discount_factor=0.9, train_steps_per_move=2):
         recent_results = deque(maxlen=10)
 
         for episode in range(num_episodes):
@@ -274,31 +293,25 @@ class AlphaSortTrainer:
             start_time = datetime.datetime.now()
             self.logger.info(f"Episode {episode: 03d} | Start training for Episode {episode: 03d}")
 
-            total_select_actions_time = 0.0
-            total_compute_rewards_time = 0.0
-            total_train_step_time = 0.0
+            # Initialize variables for tracking time
+            cum_time_dict = {
+                "select_actions": 0.0,
+                "compute_rewards": 0.0,
+                "train_step": 0.0,
+                "update_target_network": 0.0,
+                "probs_time": 0.0,
+                "mcts_time": 0.0,
+            }
             while step_count < self.max_step_count:
-                if step_count % 30 == 0:
-                    solved_envs_count = np.sum([env.is_solved() for env in self.envs])
-                    unsolved_envs_count = np.sum([env.is_solved() == 0 for env in self.envs])
-                    solve_rate = 1.0 - unsolved_envs_count / self.num_envs
-                    avg_solve_reward = np.sum([total_rewards[i] for i in range(self.num_envs) if self.envs[i].is_solved() == 1]) / solved_envs_count if solved_envs_count > 0 else 0.0
-                    avg_unsolved_reward = np.sum([total_rewards[i] for i in range(self.num_envs) if self.envs[i].is_solved() == 0]) / unsolved_envs_count if unsolved_envs_count > 0 else 0.0
-                    out_of_move_rate = np.sum([1 for env in self.envs if env.is_solved() == 0 and env.out_of_moves]) / self.num_envs
-                    reach_recursive_moves_rate = np.sum([1 for env in self.envs if env.is_solved() == 0 and env.is_in_recursive_moves]) / self.num_envs
-                    done_rate = np.sum([1 for env in self.envs if env.done]) / self.num_envs
-                    self.logger.info(
-                        f"Episode {episode: 03d} | Step {step_count: 03d} | Solve Rate: {solve_rate * 100.0: 6.2f}% "
-                        f"| Avg. Solve Rewards: {avg_solve_reward: 6.2f} | Avg. Unsolved Rewards: {avg_unsolved_reward: 6.2f} "
-                        f"| Reach Recursive Moves Rate: {reach_recursive_moves_rate * 100.0: 6.2f}% "
-                        f"| Out of Move Rate: {out_of_move_rate * 100.0: 6.2f}% | Done Rate: {done_rate * 100.0: 6.2f}%"
-                    )
+                if step_count > 0 and step_count % 20 == 0:
+                    self.logging_progress(episode, step_count, total_rewards, cum_time_dict)
 
                 # Get valid actions and select actions for each environment
                 select_actions_start = time.time_ns()
-                all_valid_actions = [env.get_valid_actions() for env in self.envs]
-                action_indices = self.select_actions(all_valid_actions, mcts_depth)
-                total_select_actions_time += time.time_ns() - select_actions_start
+                action_indices, probs_time, mcts_time = self.select_actions(mcts_depth, top_k, discount_factor)
+                cum_time_dict["select_actions"] += time.time_ns() - select_actions_start
+                cum_time_dict["probs_time"] += probs_time
+                cum_time_dict["mcts_time"] += mcts_time
 
                 # Map action indices to actions
                 actions = [self.index_to_action[idx] if idx is not None else (-1, -1) for idx in action_indices]
@@ -306,66 +319,51 @@ class AlphaSortTrainer:
                 # Compute rewards and update environments
                 compute_rewards_start = time.time_ns()
                 states, next_states, rewards, step_dones = self.compute_rewards_and_dones(actions)
-                total_compute_rewards_time += time.time_ns() - compute_rewards_start
+                cum_time_dict["compute_rewards"] += time.time_ns() - compute_rewards_start
 
                 # Store transitions in replay memory
                 self.store_transitions(states, action_indices, rewards, next_states, step_dones)
                 for i, env in enumerate(self.envs):
                     if step_dones[i]:
-                        env.done = True
+                        env.is_done = True
 
                 # Train the agent
                 train_step_start = time.time_ns()
                 for _ in range(train_steps_per_move):
                     self.agent.train_step()
-                total_train_step_time += time.time_ns() - train_step_start
+                cum_time_dict["train_step"] += time.time_ns() - train_step_start
 
                 # Update states and done flags
                 total_rewards += rewards
                 step_count += 1
 
-                if np.sum([1 for env in self.envs if env.done]) == self.num_envs:
+                if np.sum([1 for env in self.envs if env.is_done]) == self.num_envs:
                     break
+
+            for i, env in enumerate(self.envs):
+                logging.info(
+                    f"Env {i} | Move count: {env.get_move_count()} | Is solved: {env.is_solved} "
+                    f"| Is Out of Moves: {env.is_out_of_moves} | Is In Recursive Moves: {env.is_in_recursive_moves} "
+                    f"| State:\n{env.state}"
+                )
 
             # Update the target network periodically
             update_target_network_start = time.time_ns()
             if episode % self.agent.target_update_freq == 0:
                 self.agent.update_target_network()
-            total_update_target_network_time = time.time_ns() - update_target_network_start
+            cum_time_dict["update_target_network"] = time.time_ns() - update_target_network_start
 
             # Log training progress
-            out_of_move_rate = np.sum([1 for env in self.envs if env.is_solved() == 0 and env.out_of_moves]) / self.num_envs
-            reach_max_steps_rate = np.mean([env.get_move_count() >= self.max_step_count for env in self.envs])
-            reach_recursive_moves_rate = np.sum([1 for env in self.envs if env.is_solved() == 0 and env.is_in_recursive_moves]) / self.num_envs
-            solved_envs_count = np.sum([env.is_solved() for env in self.envs])
-            unsolved_envs_count = np.sum([env.is_solved() == 0 for env in self.envs])
-            avg_solve_step = np.sum([env.get_move_count() for env in self.envs if env.is_solved()]) / solved_envs_count if solved_envs_count > 0 else 0.0
-            avg_solve_reward = np.sum([total_rewards[i] for i in range(self.num_envs) if self.envs[i].is_solved() == 1]) / solved_envs_count if solved_envs_count > 0 else 0.0
-            avg_unsolve_reward = np.sum([total_rewards[i] for i in range(self.num_envs) if self.envs[i].is_solved() == 0]) / unsolved_envs_count if unsolved_envs_count > 0 else 0.0
-            solve_rate = np.mean([env.is_solved() for env in self.envs])
-            recent_results.append(solve_rate)
-            recent_solve_rate = np.mean(recent_results)
+            solved_envs_count = np.sum([env.is_solved for env in self.envs])
+            avg_solve_step = np.sum([env.get_move_count() for env in self.envs if env.is_solved]) / solved_envs_count if solved_envs_count > 0 else 0.0
+            recent_results.append(solved_envs_count / self.num_envs)
 
             elapsed_seconds = (datetime.datetime.now() - start_time).total_seconds()
+            self.logging_progress(episode, step_count, total_rewards, cum_time_dict)
             self.logger.info(
-                f"Episode {episode: 03d} | Solve Rate: {solve_rate * 100: 6.1f}%"
-                f"| Out of Move Rate: {out_of_move_rate * 100: 6.1f}% | Reach Max Steps Rate: {reach_max_steps_rate * 100: 6.1f}% "
-                f"| Reach Recursive Moves Rate: {reach_recursive_moves_rate * 100: 6.1f}% "
-                f"| Last 10 Solve Rate: {recent_solve_rate * 100: 6.1f}%"
-            )
-            self.logger.info(
-                f"Episode {episode: 03d} | Avg. Solve Rewards: {avg_solve_reward: 6.2f} | Avg. Unsolved Rewards: {avg_unsolve_reward: 6.2f} "
+                f"Episode {episode: 03d} | Last 10 Solve Rate: {np.mean(recent_results) * 100: 6.1f}% "
                 f"| Avg. Solve Steps: {avg_solve_step: 6.1f} "
-            )
-            self.logger.info(
-                f"Episode {episode: 03d} | Total elapsed time for Episode {episode: 03d}: {elapsed_seconds} seconds "
-            )
-            self.logger.info(
-                f"Episode {episode: 03d} | Elapsed Time "
-                f"| Select actions: {total_select_actions_time / 10**9:.2f} seconds"
-                f"| Compute rewards: {total_compute_rewards_time / 10**9:.2f} seconds"
-                f"| Train step: {total_train_step_time / 10**9:.2f} seconds"
-                f"| Update target network: {total_update_target_network_time / 10**9:.2f} seconds"
+                f"| Total elapsed time for Episode {episode: 03d}: {elapsed_seconds} seconds"
             )
 
             # Save the model periodically

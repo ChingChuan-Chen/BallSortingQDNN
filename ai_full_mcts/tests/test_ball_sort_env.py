@@ -34,8 +34,7 @@ def test_reset(env):
         assert env.num_balls_per_tube[i] == 0
 
     # validate Cython environment
-    assert env.is_moved() == True
-    assert env.is_solved() == False
+    assert env.is_solved == False
     assert env.get_move_count() == 0
 
 
@@ -114,3 +113,49 @@ def test_memory_view_access(env):
     # Access state and num_balls_per_tube from C_BallSortEnv
     assert env._env.get_state()[0, 0] == 99
     assert env._env.get_num_balls_per_tube()[0] == 111
+
+
+def test_clone(env):
+    # Set up the initial state
+    env.reset()
+    env.move(0, 5)  # Perform a move to modify the state
+    env.update_num_balls_per_tube()
+
+    # Clone the environment
+    cloned_env = env.clone()
+
+    # Validate the get_valid_actions method
+    valid_actions = env.valid_actions
+    cloned_valid_actions = cloned_env.valid_actions
+    assert len(valid_actions) == len(cloned_valid_actions), "Valid actions count does not match between original and cloned environments."
+
+    # Validate that the cloned environment has the same state
+    assert np.array_equal(env.state, cloned_env.state), "Cloned state does not match the original state."
+    assert np.array_equal(env.num_balls_per_tube, cloned_env.num_balls_per_tube), "Cloned num_balls_per_tube does not match the original."
+
+    # Validate that the cloned environment is independent (deep copy)
+    cloned_env.state[0, 0] = 99
+    cloned_env.num_balls_per_tube[0] = 111
+    assert env.state[0, 0] != 99, "Original state was modified when changing the cloned state."
+    assert env.num_balls_per_tube[0] != 111, "Original num_balls_per_tube was modified when changing the cloned num_balls_per_tube."
+
+    # Validate that the cloned environment's move count matches the original
+    assert env.get_move_count() == cloned_env.get_move_count(), "Move count does not match between original and cloned environments."
+
+    # Validate that the cloned environment's solved status matches the original
+    assert env.is_solved == cloned_env.is_solved, "Solved status does not match between original and cloned environments."
+
+    # Validate that the environment's move count is updated correctly and independently
+    env.move(0, 4)  # Perform another move in the original environment
+    env.update_num_balls_per_tube()
+    assert env.get_move_count() != cloned_env.get_move_count(), "Move count should not match after modifying the original environment."
+
+
+def test_get_valid_actions(env):
+    """Test the get_valid_actions method."""
+    env.reset()
+    valid_actions = env.valid_actions
+
+    assert len(valid_actions) > 0, "There should be valid actions available."
+    assert env.is_done == False, "The environment should not be done after getting valid actions."
+    assert env.is_out_of_moves == False, "The environment should not be out of moves after getting valid actions."

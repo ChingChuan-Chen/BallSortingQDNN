@@ -168,5 +168,8 @@ cdef class C_BallSortEnv:
     def get_move_count(self) -> int:
         return self.move_count
 
+    def set_move_count(self, int move_count):
+        self.move_count = move_count
+
     def is_moved(self) -> bint:
         return self.moved

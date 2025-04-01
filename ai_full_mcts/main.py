@@ -28,15 +28,15 @@ if __name__ == "__main__":
     max_num_colors = 12
     num_empty_tubes = 2
     max_number_tubes = max_num_colors + num_empty_tubes
-    n_envs = 32
+    n_envs = 64
     previous_model_path = None
 
     train_game_size = [
         {"num_colors": 4, "capacity": 4, "episodes": 100},
-        {"num_colors": 5, "capacity": 4, "episodes": 150},
-        {"num_colors": 6, "capacity": 4, "episodes": 150},
-        {"num_colors": 7, "capacity": 4, "episodes": 150},
-        {"num_colors": 8, "capacity": 4, "episodes": 200},
+        # {"num_colors": 5, "capacity": 4, "episodes": 150},
+        # {"num_colors": 6, "capacity": 4, "episodes": 150},
+        # {"num_colors": 7, "capacity": 4, "episodes": 150},
+        # {"num_colors": 8, "capacity": 4, "episodes": 200},
         # {"num_colors": 9, "capacity": 4, "episodes": 300},
         # {"num_colors": 10, "capacity": 4, "episodes": 1500},
         # {"num_colors": 11, "capacity": 4, "episodes": 1800},
@@ -69,6 +69,6 @@ if __name__ == "__main__":
             logger.info("No previous model found, start fresh.")
 
         trainer = AlphaSortTrainer(envs, agent, max_num_colors, max_tube_capacity)
-        trainer.train(episodes, mcts_depth=3, train_steps_per_move=2)
+        trainer.train(episodes, mcts_depth=4, top_k=5, train_steps_per_move=1)
 
         previous_model_path = save_model(agent, num_colors, tube_capacity, save_dir="models")
