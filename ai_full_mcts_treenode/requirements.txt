@@ -1,0 +1,6 @@
+joblib
+torch
+numpy
+cython
+pybind11
+pytest
