@@ -11,10 +11,8 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from joblib import Parallel, delayed
-from alpha_sort.ball_sort_env import BallSortEnv
+from alpha_sort.lib.ball_sort_env import BallSortEnv
 from alpha_sort.utils import save_model, hash_state
-from alpha_sort.lib._state_utils import state_encode, state_decode
-
 
 CurrentEnv = namedtuple('CurrentEnv', ['env', 'depth', 'reward', 'original_env_idx', 'action_idx'])
 

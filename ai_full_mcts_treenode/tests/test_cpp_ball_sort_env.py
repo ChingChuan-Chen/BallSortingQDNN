@@ -44,6 +44,10 @@ def imbalanced_env():
     ], dtype=np.int8)
     return BallSortEnv(tube_capacity=4, num_colors=4, num_empty_tubes=2, state=state)
 
+@pytest.fixture
+def random_env():
+    return BallSortEnv(tube_capacity=4, num_colors=4, num_empty_tubes=2)
+
 def test_top_index(env, imbalanced_env):
     for i in range(4):
         assert env.top_index(i) == 3
@@ -76,7 +80,7 @@ def test_get_top_color_streak(env, imbalanced_env):
     assert imbalanced_env.get_top_color_streak(4) == 2
     assert imbalanced_env.get_top_color_streak(5) == 0
 
-def test_is_valid_move(env, imbalanced_env):
+def test_is_valid_move(env, imbalanced_env, random_env):
     assert env.is_valid_move(0, 4)  # Move from tube 0 to empty tube 4
     assert env.is_valid_move(1, 5)  # Move from tube 1 to empty tube 5
     assert not env.is_valid_move(0, 0)  # Cannot move to the same tube
@@ -85,6 +89,9 @@ def test_is_valid_move(env, imbalanced_env):
 
     assert imbalanced_env.is_valid_move(0, 1)  # Can move to matched color
     assert not imbalanced_env.is_valid_move(0, 4)  # Cannot move to non-matched color
+
+    assert not random_env.is_valid_move(0, 1)
+    assert random_env.is_valid_move(0, 4)
 
 def test_is_solved(env, solved_env, imbalanced_env):
     assert env.get_is_solved() == False

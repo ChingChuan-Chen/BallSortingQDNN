@@ -5,7 +5,11 @@
 
 class BallSortEnv {
 public:
+    // Constructor with state
     BallSortEnv(int num_colors, int tube_capacity, int num_empty_tubes, const std::vector<std::vector<int8_t>>& state);
+
+    // Constructor without state (random initialization)
+    BallSortEnv(int num_colors, int tube_capacity, int num_empty_tubes);
 
     void reset();
     int top_index(int tube_idx) const;
@@ -47,6 +51,9 @@ private:
     bool is_moved;
     bool is_solved;
     std::vector<std::vector<int8_t>> state;
+
+    // check if the state is valid
+    bool is_valid_state() const;
 
     // Cache for is_valid_move
     std::vector<std::vector<bool>> valid_move_cache;
