@@ -48,6 +48,36 @@ def imbalanced_env():
 def random_env():
     return BallSortEnv(tube_capacity=4, num_colors=4, num_empty_tubes=2)
 
+def test_clone(env):
+    # Clone the environment
+    cloned_env = env.clone()
+
+    # Ensure the cloned environment is not the same object
+    assert cloned_env is not env
+
+    # Ensure the state is identical
+    np.testing.assert_array_equal(cloned_env.get_state(), env.get_state())
+
+    # Ensure other attributes are identical
+    assert cloned_env.get_move_count() == env.get_move_count()
+    assert cloned_env.get_is_done() == env.get_is_done()
+    assert cloned_env.get_is_moved() == env.get_is_moved()
+    assert cloned_env.get_is_solved() == env.get_is_solved()
+
+    # Modify the cloned environment and ensure it does not affect the original
+    cloned_env.move(1, 4)
+    assert not np.array_equal(cloned_env.get_state(), env.get_state())
+    assert cloned_env.get_valid_actions() != env.get_valid_actions()
+    assert cloned_env.is_valid_move(2, 4) == False
+    assert env.is_valid_move(2, 4) == True
+    assert cloned_env.get_move_count() != env.get_move_count()
+
+    # Modify the environment and ensure it does not affect the original
+    env.move(0, 4)
+    assert not np.array_equal(cloned_env.get_state(), env.get_state())
+    assert cloned_env.get_valid_actions() != env.get_valid_actions()
+    assert cloned_env.get_move_count() == env.get_move_count()
+
 def test_top_index(env, imbalanced_env):
     for i in range(4):
         assert env.top_index(i) == 3
