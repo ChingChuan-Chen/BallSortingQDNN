@@ -28,13 +28,13 @@ class AlphaSortTrainer:
         self.rng = np.random.default_rng(random.randint(0, 2**31-1))
 
         # Environment properties
-        self.num_colors = envs[0].num_colors
-        self.tube_capacity = envs[0].tube_capacity
-        self.num_empty_tubes = envs[0].num_empty_tubes
+        self.num_colors = envs[0].get_num_colors()
+        self.tube_capacity = envs[0].get_tube_capacity()
+        self.num_empty_tubes = envs[0].get_num_empty_tubes()
         self.num_tubes = self.num_colors + self.num_empty_tubes
         self.num_envs = len(envs)
         self.max_tubes = max_num_colors + self.num_empty_tubes
-        self.max_step_count = 75 * envs[0].num_colors
+        self.max_step_count = 75 * envs[0].get_num_colors()
         self.min_dcount_state = self.num_tubes + 2
         self.trying_step_count = self.num_tubes * self.num_colors * 2
         self.hard_factor = self.tube_capacity * self.num_colors ** 2
@@ -62,7 +62,7 @@ class AlphaSortTrainer:
         # Initialize the list of current environments and their corresponding rewards
         current_env_list = []
         for i, env in enumerate(self.envs):
-            if env.is_done or len(env.valid_actions) == 0:
+            if env.get_is_done() or env.have_valid_moves() == 0:
                 continue
             current_env_list.append(CurrentEnv(env.clone(), 0, 0.0, i, 0))
         action_rewards = [defaultdict(float) for _ in range(self.num_envs)]
@@ -75,7 +75,7 @@ class AlphaSortTrainer:
 
             state_inputs = []
             for idx, current_env in enumerate(current_env_list):
-                state_inputs.append(self.state_encode_helper(current_env.env.state))
+                state_inputs.append(self.state_encode_helper(current_env.env.get_state()))
 
             assert len(state_inputs) == len(current_env_list), "State inputs and current environment list length mismatch."
 
@@ -130,23 +130,11 @@ class AlphaSortTrainer:
 
             # Run parallel environment processing
             mcts_start_time = time.time_ns()
-            # with ThreadPoolExecutor() as executor:
-            #     futures = [
-            #         executor.submit(
-            #             process_env,
-            #             current_env,
-            #             current_env.env.valid_actions,
-            #             np.array([self.action_to_index[action] for action in current_env.env.valid_actions]),
-            #             probs[idx]
-            #         )
-            #         for idx, current_env in enumerate(current_env_list)
-            #     ]
-            #     next_env_list = list(itertools.chain.from_iterable(future.result() for future in futures))
             next_env_list = list(itertools.chain.from_iterable(
                 process_env(
                     current_env,
-                    current_env.env.valid_actions,
-                    np.array([self.action_to_index[action] for action in current_env.env.valid_actions]),
+                    current_env.env.get_valid_actions(),
+                    np.array([self.action_to_index[action] for action in current_env.env.get_valid_actions()]),
                     probs[idx]
                 )
                 for idx, current_env in enumerate(current_env_list)
@@ -159,14 +147,14 @@ class AlphaSortTrainer:
             current_env_list = []
             if dd < mcts_depth:
                 for idx, current_env in enumerate(next_env_list):
-                    if current_env.env is None or len(current_env.env.valid_actions) == 0:
+                    if current_env.env is None or current_env.have_valid_moves() == 0:
                         continue
-                    if not current_env.env.is_done:
+                    if not current_env.env.get_is_done():
                         current_env_list.append(current_env)
 
         action_indices = []
         for env_idx, env in enumerate(self.envs):
-            if env.is_done or len(action_rewards[env_idx]) == 0:
+            if env.get_is_done() or len(action_rewards[env_idx]) == 0:
                 action_indices.append(None)
             else:
                 action_indices.append(max(action_rewards[env_idx].items(), key=lambda x: x[1])[0])

@@ -67,7 +67,7 @@ def test_clone(env):
     # Modify the cloned environment and ensure it does not affect the original
     cloned_env.move(1, 4)
     assert not np.array_equal(cloned_env.get_state(), env.get_state())
-    assert cloned_env.get_valid_actions() != env.get_valid_actions()
+    assert cloned_env.get_valid_moves() != env.get_valid_moves()
     assert cloned_env.is_valid_move(2, 4) == False
     assert env.is_valid_move(2, 4) == True
     assert cloned_env.get_move_count() != env.get_move_count()
@@ -75,7 +75,7 @@ def test_clone(env):
     # Modify the environment and ensure it does not affect the original
     env.move(0, 4)
     assert not np.array_equal(cloned_env.get_state(), env.get_state())
-    assert cloned_env.get_valid_actions() != env.get_valid_actions()
+    assert cloned_env.get_valid_moves() != env.get_valid_moves()
     assert cloned_env.get_move_count() == env.get_move_count()
 
 def test_top_index(env, imbalanced_env):
@@ -128,10 +128,10 @@ def test_is_solved(env, solved_env, imbalanced_env):
     assert solved_env.get_is_solved() == True
     assert imbalanced_env.get_is_solved() == False
 
-def test_get_valid_actions(env, solved_env, imbalanced_env):
-    assert sorted(env.get_valid_actions()) == [(1, 4), (1, 5), (2, 4), (2, 5)]
-    assert sorted(imbalanced_env.get_valid_actions()) == [(0, 1), (0, 5), (1, 0), (1, 5), (4, 5)]
-    assert solved_env.get_valid_actions() == []
+def test_get_valid_moves(env, solved_env, imbalanced_env):
+    assert sorted(env.get_valid_moves()) == [(1, 4), (1, 5), (2, 4), (2, 5)]
+    assert sorted(imbalanced_env.get_valid_moves()) == [(0, 1), (0, 5), (1, 0), (1, 5), (4, 5)]
+    assert solved_env.get_valid_moves() == []
 
 def test_get_state(env):
     """Test that get_state returns the correct NumPy array."""

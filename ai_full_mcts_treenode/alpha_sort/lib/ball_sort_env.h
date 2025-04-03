@@ -45,7 +45,7 @@ public:
     // methods for moves
     bool is_valid_move(int src, int dst) const;
     bool have_valid_moves() const;
-    std::vector<std::pair<int, int>> get_valid_actions();
+    std::vector<std::pair<int, int>> get_valid_moves();
     bool move(int src, int dst);
     void undo_move(int src, int dst);
 
