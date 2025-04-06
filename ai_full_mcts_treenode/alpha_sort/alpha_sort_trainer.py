@@ -124,6 +124,7 @@ class AlphaSortTrainer:
                 return next_env_list
 
             # Run parallel environment processing
+            mcts_start_time = time.time_ns()
             next_env_list = list(itertools.chain.from_iterable(
                 process_env(
                     current_env,
