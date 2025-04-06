@@ -36,6 +36,8 @@ public:
     void set_is_moved(bool is_moved) { this->is_moved = is_moved; }
     bool get_is_solved();
     void set_is_solved(bool is_solved) { this->is_solved = is_solved; }
+    bool get_is_recursive_move() const { return is_recursive_move; }
+    void set_is_recursive_move(bool is_recursive_move) { this->is_recursive_move = is_recursive_move; }
     int get_num_colors() const { return num_colors; }
     int get_tube_capacity() const { return tube_capacity; }
     int get_num_empty_tubes() const { return num_empty_tubes; }
@@ -48,7 +50,8 @@ public:
     // methods for state key and history
     std::string get_state_key() { return state_key; }
     bool is_recent_state_key() const;
-    bool is_in_recursive_move();
+    int get_current_state_count();
+    int get_last_state_count();
 
     // methods for moves
     bool is_valid_move(int src, int dst) const;
@@ -74,11 +77,11 @@ private:
     int num_empty_tubes;
     int num_tubes;
     int move_count;
-    int recursive_threshold;
     std::string state_key;
     bool is_done;
     bool is_moved;
     bool is_solved;
+    bool is_recursive_move;
     std::vector<std::vector<int8_t>> state;
 
     // check if the state is valid

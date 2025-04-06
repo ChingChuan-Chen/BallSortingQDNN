@@ -35,8 +35,7 @@ class AlphaSortTrainer:
         self.num_envs = len(envs)
         self.max_tubes = max_num_colors + self.num_empty_tubes
         self.max_step_count = 75 * envs[0].get_num_colors()
-        self.min_dcount_state = self.num_tubes + 2
-        self.trying_step_count = self.num_tubes * self.num_colors * 2
+        self.recursive_move_threshold = self.num_tubes * self.tube_capacity
         self.hard_factor = self.tube_capacity * self.num_colors ** 2
 
         # Precompute all possible actions
@@ -187,8 +186,19 @@ class AlphaSortTrainer:
     def _compute_state_history_penalty(self, env) -> float:
         penalty = 0.0
         if env.is_recent_state_key():
-            penalty -= 0.1 * env.get_move_count() / self.hard_factor
+            penalty -= env.get_move_count() / self.hard_factor
+        if env.get_current_state_count() > self.num_tubes:
+            penalty -= -250.0 / self.hard_factor * env.get_current_state_count() / self.recursive_move_threshold
+        if env.get_last_state_count() > self.num_tubes * 2:
+            penalty -= -250.0 / self.hard_factor * env.get_last_state_count() / self.recursive_move_threshold
         return penalty
+
+    def check_is_recursive_move(self, env) -> bool:
+        if env.get_move_count() < self.recursive_move_threshold * 3:
+            return False
+        if env.get_current_state_count() > self.recursive_move_threshold and env.get_last_state_count() > self.recursive_move_threshold:
+            return True
+        return False
 
     def compute_rewards_and_dones(self, actions):
         encoded_states = np.array([self.state_encode_helper(env) for env in self.envs])
@@ -207,7 +217,8 @@ class AlphaSortTrainer:
 
             src, dst = actions[i]
             env.move(src, dst)
-            if env.is_in_recursive_move():
+            if self.check_is_recursive_move(env):
+                env.set_is_recursive_move(True)
                 rewards[i] = -250.0 / self.hard_factor
                 step_dones[i] = True
             else:
@@ -238,7 +249,7 @@ class AlphaSortTrainer:
         avg_solve_reward = np.sum([total_rewards[i] for i in range(self.num_envs) if self.envs[i].get_is_solved()]) / solved_envs_count if solved_envs_count > 0 else 0.0
         avg_unsolved_reward = np.sum([total_rewards[i] for i in range(self.num_envs) if self.envs[i].get_is_solved() == False]) / unsolved_envs_count if unsolved_envs_count > 0 else 0.0
         out_of_move_rate = np.sum([1 for env in self.envs if env.get_is_solved() == False and env.have_valid_moves() == False]) / self.num_envs
-        reach_recursive_moves_rate = np.sum([1 for env in self.envs if env.get_is_solved() == False and env.is_in_recursive_move()]) / self.num_envs
+        reach_recursive_moves_rate = np.sum([1 for env in self.envs if env.get_is_solved() == False and env.get_is_recursive_move()]) / self.num_envs
         done_rate = np.sum([1 for env in self.envs if env.get_is_done()]) / self.num_envs
         self.logger.info(
             f"Episode {episode: 03d} | Step {step_count: 03d} | Solve Rate: {solve_rate * 100.0: 6.2f}% "
@@ -318,7 +329,7 @@ class AlphaSortTrainer:
             for i, env in enumerate(self.envs):
                 logging.info(
                     f"Env {i} | Move count: {env.get_move_count()} | Is solved: {env.get_is_solved()} "
-                    f"| Is Out of Moves: {not env.have_valid_moves()} | Is In Recursive Moves: {env.is_in_recursive_move()} "
+                    f"| Is Out of Moves: {not env.have_valid_moves()} | Is In Recursive Moves: {env.get_is_recursive_move()} "
                     f"| State:\n{env.get_state()}"
                 )
 

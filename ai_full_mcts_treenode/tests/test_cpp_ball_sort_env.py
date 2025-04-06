@@ -283,11 +283,8 @@ def test_is_recent_state_key(env):
         env.move(1, 4)
         env.move(4, 1)
     assert env.is_recent_state_key() is True
-    assert env.is_in_recursive_move() is False
-    env.move(1, 4)
-    assert env.is_recent_state_key() is True
-    assert env.is_in_recursive_move() is False
-    env.move(4, 1)
+    assert env.get_current_state_count() == 7
+    assert env.get_last_state_count() == 6
 
     # check if it is in recursive move
     for _ in range(20):
@@ -295,7 +292,8 @@ def test_is_recent_state_key(env):
         env.move(4, 1)
 
     assert env.is_recent_state_key() is True
-    assert env.is_in_recursive_move() is True
+    assert env.get_current_state_count() == 27
+    assert env.get_last_state_count() == 26
 
 def test_get_encoded_state(env):
     max_num_colors = 12
