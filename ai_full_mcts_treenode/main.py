@@ -32,7 +32,7 @@ if __name__ == "__main__":
     previous_model_path = None
 
     train_game_size = [
-        {"num_colors": 4, "capacity": 4, "episodes": 2},
+        {"num_colors": 4, "capacity": 4, "episodes": 100},
         # {"num_colors": 5, "capacity": 4, "episodes": 150},
         # {"num_colors": 6, "capacity": 4, "episodes": 150},
         # {"num_colors": 7, "capacity": 4, "episodes": 150},

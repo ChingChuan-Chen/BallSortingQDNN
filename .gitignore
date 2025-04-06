@@ -100,6 +100,5 @@ compile_commands.json
 *.orig
 *.rej
 
-ai_epsilon_greedy/checkpoints
-ai_full_mcts/checkpoints
+checkpoints
 training_log.txt

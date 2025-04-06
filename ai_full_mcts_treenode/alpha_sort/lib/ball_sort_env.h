@@ -3,6 +3,9 @@
 #include <vector>
 #include <tuple>
 #include <memory>
+#include <string>
+#include <deque>
+#include <unordered_map>
 
 class BallSortEnv {
 public:
@@ -42,6 +45,11 @@ public:
         update_valid_move_cache();
     }
 
+    // methods for state key and history
+    std::string get_state_key() { return state_key; }
+    bool is_recent_state_key() const;
+    bool is_in_recursive_move();
+
     // methods for moves
     bool is_valid_move(int src, int dst) const;
     bool have_valid_moves() const;
@@ -66,6 +74,8 @@ private:
     int num_empty_tubes;
     int num_tubes;
     int move_count;
+    int recursive_threshold;
+    std::string state_key;
     bool is_done;
     bool is_moved;
     bool is_solved;
@@ -73,6 +83,12 @@ private:
 
     // check if the state is valid
     bool is_valid_state() const;
+
+    // History of state keys
+    std::deque<std::string> state_key_history;
+    static const int MAX_HISTORY_SIZE = 10;
+    std::unordered_map<std::string, int> frequency_map;
+    void update_state_key();
 
     // Cache for is_valid_move
     std::vector<std::vector<bool>> valid_move_cache;

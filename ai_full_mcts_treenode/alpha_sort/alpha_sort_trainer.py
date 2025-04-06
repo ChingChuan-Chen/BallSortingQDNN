@@ -49,14 +49,9 @@ class AlphaSortTrainer:
         # initialize logger
         self.logger = logging.getLogger()
 
-    def state_encode_helper(self, state):
+    def state_encode_helper(self, env):
         # Encode the state using the provided function
-        return state_encode(
-            state,
-            self.max_num_colors,
-            self.num_empty_tubes,
-            self.max_tube_capacity
-        )
+        return env.get_encoded_state(self.max_num_colors, self.num_empty_tubes, self.max_tube_capacity)
 
     def select_actions(self, mcts_depth, top_k, discount_factor=0.9):
         # Initialize the list of current environments and their corresponding rewards
@@ -75,7 +70,7 @@ class AlphaSortTrainer:
 
             state_inputs = []
             for idx, current_env in enumerate(current_env_list):
-                state_inputs.append(self.state_encode_helper(current_env.env.get_state()))
+                state_inputs.append(self.state_encode_helper(current_env.env))
 
             assert len(state_inputs) == len(current_env_list), "State inputs and current environment list length mismatch."
 
@@ -133,8 +128,8 @@ class AlphaSortTrainer:
             next_env_list = list(itertools.chain.from_iterable(
                 process_env(
                     current_env,
-                    current_env.env.get_valid_actions(),
-                    np.array([self.action_to_index[action] for action in current_env.env.get_valid_actions()]),
+                    current_env.env.get_valid_moves(),
+                    np.array([self.action_to_index[action] for action in current_env.env.get_valid_moves()]),
                     probs[idx]
                 )
                 for idx, current_env in enumerate(current_env_list)
@@ -147,7 +142,7 @@ class AlphaSortTrainer:
             current_env_list = []
             if dd < mcts_depth:
                 for idx, current_env in enumerate(next_env_list):
-                    if current_env.env is None or current_env.have_valid_moves() == 0:
+                    if current_env.env is None or current_env.env.have_valid_moves():
                         continue
                     if not current_env.env.get_is_done():
                         current_env_list.append(current_env)
@@ -163,7 +158,7 @@ class AlphaSortTrainer:
 
     def compute_action_reward(self, env, src: int, dst: int) -> float:
         reward = -35.0 / self.hard_factor
-        if env.is_solved:
+        if env.get_is_solved():
             return self.hard_factor * 10.0
         reward += self._compute_tube_rewards(env, src, dst)
         reward += self._compute_state_history_penalty(env)
@@ -175,14 +170,14 @@ class AlphaSortTrainer:
         if env.is_completed_tube(dst):
             reward += self.tube_capacity
         else:
-            if env.state_key not in env.state_history and dst_top_color_streak >= self.tube_capacity - 2:
+            if not env.is_recent_state_key() and dst_top_color_streak >= self.tube_capacity - 2:
                 if dst_top_color_streak == self.tube_capacity - 1:
                     reward += self.tube_capacity / 2.0
                 elif dst_top_color_streak == self.tube_capacity - 2:
                     reward += self.tube_capacity / 4.0
 
         src_top_color_streak = env.get_top_color_streak(src)
-        if env.state_key not in env.state_history and src_top_color_streak >= self.tube_capacity - 2:
+        if not env.is_recent_state_key() and src_top_color_streak >= self.tube_capacity - 2:
             if src_top_color_streak == self.tube_capacity - 1:
                 reward += self.tube_capacity / 2.0
             elif src_top_color_streak == self.tube_capacity - 2:
@@ -191,25 +186,17 @@ class AlphaSortTrainer:
 
     def _compute_state_history_penalty(self, env) -> float:
         penalty = 0.0
-        if len(set(env.recent_state_keys)) < 6:
+        if env.is_recent_state_key():
             penalty -= 0.1 * env.get_move_count() / self.hard_factor
         return penalty
 
-    def _check_recursive_moves(self, env) -> bool:
-        recursive_move_threshold = self.num_tubes * self.tube_capacity * 2
-        reach_threshold = env.state_history[env.state_key] >= recursive_move_threshold
-        count_reach_threshold = sum([1 for _, v in env.state_history.items() if v >= recursive_move_threshold])
-        if reach_threshold and count_reach_threshold >= 3:
-            return True
-        return False
-
     def compute_rewards_and_dones(self, actions):
-        states = np.array([env.state.copy() for env in self.envs])
+        encoded_states = np.array([self.state_encode_helper(env) for env in self.envs])
         rewards = np.zeros(self.num_envs, dtype=np.float32)
         step_dones = np.zeros(self.num_envs, dtype=bool)
 
         for i, env in enumerate(self.envs):
-            if env.is_done:
+            if env.get_is_done():
                 step_dones[i] = True
                 continue
 
@@ -220,41 +207,39 @@ class AlphaSortTrainer:
 
             src, dst = actions[i]
             env.move(src, dst)
-            if self._check_recursive_moves(env):
-                env.is_in_recursive_moves = True
+            if env.is_in_recursive_move():
                 rewards[i] = -250.0 / self.hard_factor
                 step_dones[i] = True
             else:
                 rewards[i] += self.compute_action_reward(env, src, dst)
-                step_dones[i] = env.is_solved
-        next_states = np.array([env.state.copy() for env in self.envs])
-        return states, next_states, rewards, step_dones
+                step_dones[i] = env.get_is_solved()
+        encoded_next_states = np.array([self.state_encode_helper(env) for env in self.envs])
+        return encoded_states, encoded_next_states, rewards, step_dones
 
-    def store_transitions(self, states, action_indices, rewards, next_states, step_dones):
+    def store_transitions(self, encoded_states, action_indices, rewards, encoded_next_states, step_dones):
         for i, env in enumerate(self.envs):
-            if env.is_done:
+            if env.get_is_done():
                 continue
-            encoded_state = self.state_encode_helper(states[i])
             if action_indices[i] is None:
-                self.agent.store_transition(encoded_state, 0, -10.0, encoded_state, True)
+                self.agent.store_transition(encoded_states[i], 0, -10.0, encoded_states[i], True)
             else:
                 self.agent.store_transition(
-                    encoded_state,
+                    encoded_states[i],
                     action_indices[i],
                     rewards[i],
-                    self.state_encode_helper(next_states[i]),
+                    encoded_next_states[i],
                     step_dones[i]
                 )
 
     def logging_progress(self, episode, step_count, total_rewards, cum_time_dict, num_envs_in_depth):
-        solved_envs_count = np.sum([env.is_solved for env in self.envs])
+        solved_envs_count = np.sum([env.get_is_solved() for env in self.envs])
         unsolved_envs_count = self.num_envs - solved_envs_count
         solve_rate = solved_envs_count / self.num_envs
-        avg_solve_reward = np.sum([total_rewards[i] for i in range(self.num_envs) if self.envs[i].is_solved]) / solved_envs_count if solved_envs_count > 0 else 0.0
-        avg_unsolved_reward = np.sum([total_rewards[i] for i in range(self.num_envs) if self.envs[i].is_solved == False]) / unsolved_envs_count if unsolved_envs_count > 0 else 0.0
-        out_of_move_rate = np.sum([1 for env in self.envs if env.is_solved == False and env.is_out_of_moves]) / self.num_envs
-        reach_recursive_moves_rate = np.sum([1 for env in self.envs if env.is_solved == False and env.is_in_recursive_moves]) / self.num_envs
-        done_rate = np.sum([1 for env in self.envs if env.is_done]) / self.num_envs
+        avg_solve_reward = np.sum([total_rewards[i] for i in range(self.num_envs) if self.envs[i].get_is_solved()]) / solved_envs_count if solved_envs_count > 0 else 0.0
+        avg_unsolved_reward = np.sum([total_rewards[i] for i in range(self.num_envs) if self.envs[i].get_is_solved() == False]) / unsolved_envs_count if unsolved_envs_count > 0 else 0.0
+        out_of_move_rate = np.sum([1 for env in self.envs if env.get_is_solved() == False and env.have_valid_moves() == False]) / self.num_envs
+        reach_recursive_moves_rate = np.sum([1 for env in self.envs if env.get_is_solved() == False and env.is_in_recursive_move()]) / self.num_envs
+        done_rate = np.sum([1 for env in self.envs if env.get_is_done()]) / self.num_envs
         self.logger.info(
             f"Episode {episode: 03d} | Step {step_count: 03d} | Solve Rate: {solve_rate * 100.0: 6.2f}% "
             f"| Avg. Solve Rewards: {avg_solve_reward: 6.2f} | Avg. Unsolved Rewards: {avg_unsolved_reward: 6.2f} "
@@ -308,14 +293,14 @@ class AlphaSortTrainer:
 
                 # Compute rewards and update environments
                 compute_rewards_start = time.time_ns()
-                states, next_states, rewards, step_dones = self.compute_rewards_and_dones(actions)
+                encoded_states, encoded_next_states, rewards, step_dones = self.compute_rewards_and_dones(actions)
                 cum_time_dict["compute_rewards"] += time.time_ns() - compute_rewards_start
 
                 # Store transitions in replay memory
-                self.store_transitions(states, action_indices, rewards, next_states, step_dones)
+                self.store_transitions(encoded_states, action_indices, rewards, encoded_next_states, step_dones)
                 for i, env in enumerate(self.envs):
                     if step_dones[i]:
-                        env.is_done = True
+                        env.set_is_done(True)
 
                 # Train the agent
                 train_step_start = time.time_ns()
@@ -327,14 +312,14 @@ class AlphaSortTrainer:
                 total_rewards += rewards
                 step_count += 1
 
-                if np.sum([1 for env in self.envs if env.is_done]) == self.num_envs:
+                if np.sum([1 for env in self.envs if env.get_is_done()]) == self.num_envs:
                     break
 
             for i, env in enumerate(self.envs):
                 logging.info(
-                    f"Env {i} | Move count: {env.get_move_count()} | Is solved: {env.is_solved} "
-                    f"| Is Out of Moves: {env.is_out_of_moves} | Is In Recursive Moves: {env.is_in_recursive_moves} "
-                    f"| State:\n{env.state}"
+                    f"Env {i} | Move count: {env.get_move_count()} | Is solved: {env.get_is_solved()} "
+                    f"| Is Out of Moves: {not env.have_valid_moves()} | Is In Recursive Moves: {env.is_in_recursive_move()} "
+                    f"| State:\n{env.get_state()}"
                 )
 
             # Update the target network periodically
@@ -344,8 +329,8 @@ class AlphaSortTrainer:
             cum_time_dict["update_target_network"] = time.time_ns() - update_target_network_start
 
             # Log training progress
-            solved_envs_count = np.sum([env.is_solved for env in self.envs])
-            avg_solve_step = np.sum([env.get_move_count() for env in self.envs if env.is_solved]) / solved_envs_count if solved_envs_count > 0 else 0.0
+            solved_envs_count = np.sum([env.get_is_solved() for env in self.envs])
+            avg_solve_step = np.sum([env.get_move_count() for env in self.envs if env.get_is_solved()]) / solved_envs_count if solved_envs_count > 0 else 0.0
             recent_results.append(solved_envs_count / self.num_envs)
 
             elapsed_seconds = (datetime.datetime.now() - start_time).total_seconds()
