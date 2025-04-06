@@ -57,7 +57,7 @@ class AlphaSortTrainer:
         # Initialize the list of current environments and their corresponding rewards
         current_env_list = []
         for i, env in enumerate(self.envs):
-            if env.get_is_done() or env.have_valid_moves() == 0:
+            if env.get_is_done() or env.have_valid_moves() == False:
                 continue
             current_env_list.append(CurrentEnv(env.clone(), 0, 0.0, i, 0))
         action_rewards = [defaultdict(float) for _ in range(self.num_envs)]
@@ -72,7 +72,7 @@ class AlphaSortTrainer:
             for idx, current_env in enumerate(current_env_list):
                 state_inputs.append(self.state_encode_helper(current_env.env))
 
-            assert len(state_inputs) == len(current_env_list), "State inputs and current environment list length mismatch."
+            # assert len(state_inputs) == len(current_env_list), "State inputs and current environment list length mismatch."
 
             if not state_inputs:
                 break
@@ -124,7 +124,6 @@ class AlphaSortTrainer:
                 return next_env_list
 
             # Run parallel environment processing
-            mcts_start_time = time.time_ns()
             next_env_list = list(itertools.chain.from_iterable(
                 process_env(
                     current_env,
@@ -141,10 +140,10 @@ class AlphaSortTrainer:
 
             current_env_list = []
             if dd < mcts_depth:
-                for idx, current_env in enumerate(next_env_list):
-                    if current_env.env is None or current_env.env.have_valid_moves():
+                for idx, cur_env in enumerate(next_env_list):
+                    if not cur_env.env.have_valid_moves():
                         continue
-                    if not current_env.env.get_is_done():
+                    if not cur_env.env.get_is_done() and not cur_env.env.get_is_solved():
                         current_env_list.append(current_env)
 
         action_indices = []

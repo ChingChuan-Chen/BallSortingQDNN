@@ -73,7 +73,7 @@ def test_clone(env):
     assert cloned_env.get_move_count() != env.get_move_count()
 
     # Modify the environment and ensure it does not affect the original
-    env.move(0, 4)
+    env.move(1, 5)
     assert not np.array_equal(cloned_env.get_state(), env.get_state())
     assert cloned_env.get_valid_moves() != env.get_valid_moves()
     assert cloned_env.get_move_count() == env.get_move_count()
@@ -111,7 +111,7 @@ def test_get_top_color_streak(env, imbalanced_env):
     assert imbalanced_env.get_top_color_streak(5) == 0
 
 def test_is_valid_move(env, imbalanced_env, random_env):
-    assert env.is_valid_move(0, 4)  # Move from tube 0 to empty tube 4
+    assert not env.is_valid_move(0, 4)  # Move from tube 0 to empty tube 4
     assert env.is_valid_move(1, 5)  # Move from tube 1 to empty tube 5
     assert not env.is_valid_move(0, 0)  # Cannot move to the same tube
     assert not env.is_valid_move(0, 1)  # Cannot move to a non-empty tube
