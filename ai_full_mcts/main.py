@@ -1,6 +1,7 @@
 import sys
 import os
 import logging
+import traceback
 
 # Configure the logger
 logging.basicConfig(
@@ -28,37 +29,34 @@ if __name__ == "__main__":
     max_num_colors = 12
     num_empty_tubes = 2
     max_number_tubes = max_num_colors + num_empty_tubes
-    n_envs = 8
+    n_envs = 16
     previous_model_path = None
 
     train_game_size = [
-        {"num_colors": 4, "capacity": 4, "episodes": 2},
-        # {"num_colors": 5, "capacity": 4, "episodes": 150},
-        # {"num_colors": 6, "capacity": 4, "episodes": 150},
-        # {"num_colors": 7, "capacity": 4, "episodes": 150},
-        # {"num_colors": 8, "capacity": 4, "episodes": 200},
-        # {"num_colors": 9, "capacity": 4, "episodes": 300},
-        # {"num_colors": 10, "capacity": 4, "episodes": 1500},
-        # {"num_colors": 11, "capacity": 4, "episodes": 1800},
-        # {"num_colors": 12, "capacity": 4, "episodes": 2200},
-        # {"num_colors": 4, "capacity": 6, "episodes": 1500},
-        # {"num_colors": 6, "capacity": 6, "episodes": 1500},
-        # {"num_colors": 8, "capacity": 6, "episodes": 1500},
-        # {"num_colors": 4, "capacity": 8, "episodes": 1500},
-        # {"num_colors": 6, "capacity": 8, "episodes": 1500},
-        # {"num_colors": 8, "capacity": 8, "episodes": 1500},
+        {"num_colors": 6, "tube_capacity": 4, "episodes": 50},
+        {"num_colors": 8, "tube_capacity": 4, "episodes": 70},
+        {"num_colors": 10, "tube_capacity": 4, "episodes": 100},
+        # {"num_colors": 12, "tube_capacity": 4, "episodes": 200},
+        # {"num_colors": 6, "tube_capacity": 6, "episodes": 100},
+        # {"num_colors": 8, "tube_capacity": 6, "episodes": 150},
+        # {"num_colors": 10, "tube_capacity": 6, "episodes": 150},
+        # {"num_colors": 12, "tube_capacity": 6, "episodes": 200},
+        # {"num_colors": 6, "tube_capacity": 8, "episodes": 150},
+        # {"num_colors": 8, "tube_capacity": 8, "episodes": 150},
+        # {"num_colors": 10, "tube_capacity": 8, "episodes": 200},
+        # {"num_colors": 12, "tube_capacity": 8, "episodes": 200},
     ]
 
     for stage in train_game_size:
         num_colors = stage["num_colors"]
-        tube_capacity = stage["capacity"]
+        tube_capacity = stage["tube_capacity"]
         episodes = stage["episodes"]
 
-        logger.info(f"Training on puzzle with {num_colors} colors, capacity {tube_capacity}, for {episodes} episodes on {device}.")
+        logger.info(f"Training on puzzle with {num_colors} colors, tube_capacity {tube_capacity}, for {episodes} episodes on {device}.")
 
         envs = [BallSortEnv(num_colors, tube_capacity, num_empty_tubes) for _ in range(n_envs)]
 
-        agent = AlphaSortAgent(num_colors, max_num_colors, max_tube_capacity, device, batch_size=8)
+        agent = AlphaSortAgent(num_colors, max_num_colors, max_tube_capacity, device, batch_size=16)
 
         # Create a fresh or shared agent (shared helps retain learning across stages)
         if previous_model_path is not None:
@@ -69,6 +67,11 @@ if __name__ == "__main__":
             logger.info("No previous model found, start fresh.")
 
         trainer = AlphaSortTrainer(envs, agent, max_num_colors, max_tube_capacity)
-        trainer.train(episodes, mcts_depth=3, top_k=7, train_steps_per_move=1)
+
+        try:
+            trainer.train(episodes, mcts_depth=3, top_k=9, train_steps_per_move=1)
+        except Exception as e:
+            logger.error(f"An error occurred during training: {e} and the traceback is {traceback.format_exc()}")
+            raise
 
         previous_model_path = save_model(agent, num_colors, tube_capacity, save_dir="models")

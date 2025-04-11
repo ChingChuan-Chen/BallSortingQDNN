@@ -1,21 +1,31 @@
 import subprocess
 from setuptools import setup
-from Cython.Build import cythonize
-import numpy as np
+from pybind11.setup_helpers import Pybind11Extension, build_ext
 import os
+import sys
 
-def build_cython():
-    """Build the Cython extension."""
-    print("Building Cython extensions...")
-    setup(
-        ext_modules=cythonize(
-            ["alpha_sort/lib/_ball_sort_game.pyx", "alpha_sort/lib/_state_utils.pyx"],
-            compiler_directives={"language_level": "3"}
+
+def build_cpp_extension():
+    print("Building C++ extension...")
+    ext_modules = [
+        Pybind11Extension(
+            "ball_sort_env",
+            ["alpha_sort/lib/bindings.cpp", "alpha_sort/lib/ball_sort_env.cpp"],
+            language="c++",
+            include_dirs=[],
         ),
-        include_dirs=[np.get_include()],  # Add NumPy include directory
-        script_args=["build_ext", "--inplace"]
+    ]
+
+    build_dir = os.path.join("alpha_sort", "lib")
+    os.makedirs(build_dir, exist_ok=True)
+
+    setup(
+        name="ball_sort_env",
+        ext_modules=ext_modules,
+        cmdclass={"build_ext": build_ext},
+        script_args=["build_ext", "--inplace", f"--build-lib={build_dir}"],
     )
-    print("Build complete.")
+
 
 def run_pytest():
     """Run pytest after building the Cython extension."""
@@ -28,8 +38,9 @@ def run_pytest():
     return result.returncode
 
 if __name__ == "__main__":
-    # Build the Cython extension
-    build_cython()
+
+    # Build C++ extension
+    build_cpp_extension()
 
     # Run pytest
     exit_code = run_pytest()
