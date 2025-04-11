@@ -80,8 +80,6 @@ cdef class C_BallSortEnv:
         cdef int i, j
         cdef int empty_tubes = 0
         for i in range(self.num_tubes):
-            if self.moved == 0:
-                break
             if self.is_empty_tube(i) != 1:
                 for j in range(1, self.tube_capacity):
                     if self.state[i, j] != self.state[i, 0]:
@@ -101,11 +99,14 @@ cdef class C_BallSortEnv:
             return 0
         if self.is_full_tube(dst) == 1:
             return 0
-
-        dst_top_idx = self.top_index(dst)
-        if dst_top_idx == -1:
+        if self.is_completed_tube(src):
+            return 0
+        if self.is_completed_tube(dst):
+            return 0
+        if self.is_empty_tube(dst):
             return 1
 
+        dst_top_idx = self.top_index(dst)
         src_top_idx = self.top_index(src)
         return self.state[src, src_top_idx] == self.state[dst, dst_top_idx]
 

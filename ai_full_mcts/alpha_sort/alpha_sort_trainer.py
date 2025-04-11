@@ -206,7 +206,13 @@ class AlphaSortTrainer:
     def _compute_state_history_penalty(self, env) -> float:
         penalty = 0.0
         if len(set(env.recent_state_keys)) < 6:
-            penalty -= 0.1 * env.get_move_count() / self.hard_factor
+            penalty -= env.get_move_count() / self.hard_factor
+        if len(env.state_history) > self.min_dcount_state:
+            sorted_counts = sorted([v for _, v in env.state_history.items()], reverse=True)[:2]
+            if sorted_counts[0] >= self.num_tubes:
+                penalty -= -250.0 / self.hard_factor * sorted_counts[0] / (self.num_tubes * self.tube_capacity)
+            if sorted_counts[1] >= self.num_tubes:
+                penalty -= -250.0 / self.hard_factor * sorted_counts[1] / (self.num_tubes * self.tube_capacity)
         return penalty
 
     def _check_recursive_moves(self, env) -> bool:

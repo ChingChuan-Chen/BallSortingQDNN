@@ -77,7 +77,7 @@ def test_get_top_color_streak(env, imbalanced_env):
     assert imbalanced_env.get_top_color_streak(5) == 0
 
 def test_is_valid_move(env, imbalanced_env):
-    assert env.is_valid_move(0, 4)  # Move from tube 0 to empty tube 4
+    assert not env.is_valid_move(0, 4)  # Move from tube 0 to empty tube 4
     assert env.is_valid_move(1, 5)  # Move from tube 1 to empty tube 5
     assert not env.is_valid_move(0, 0)  # Cannot move to the same tube
     assert not env.is_valid_move(0, 1)  # Cannot move to a non-empty tube
@@ -207,7 +207,7 @@ def test_is_completed_tube(env, solved_env, imbalanced_env):
     assert not imbalanced_env.is_completed_tube(5)
 
 def test_reset(env):
-    env.move(0, 5)
+    env.move(1, 5)
     env.reset()
     assert env.is_solved() == 0
     assert env.is_moved() == 0
