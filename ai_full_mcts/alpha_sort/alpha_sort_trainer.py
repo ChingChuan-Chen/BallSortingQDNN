@@ -32,8 +32,8 @@ class AlphaSortTrainer:
         self.num_envs = len(envs)
         self.max_tubes = max_num_colors + self.num_empty_tubes
         self.max_step_count = 75 * envs[0].get_num_colors()
-        self.recursive_move_threshold = self.num_tubes * self.tube_capacity * 2
-        self.hard_factor = self.tube_capacity * self.num_colors ** 2
+        self.recursive_move_threshold = self.num_tubes * self.tube_capacity
+        self.hard_factor = self.num_colors / self.tube_capacity * (1.0 + self.num_empty_tubes / self.num_colors)
 
         # Precompute all possible actions
         self.all_possible_actions = [
@@ -157,9 +157,9 @@ class AlphaSortTrainer:
         return action_indices, probs_time, mcts_time, num_envs_in_depth
 
     def compute_action_reward(self, env, src: int, dst: int) -> float:
-        reward = -35.0 / self.hard_factor
+        reward = -0.5 / self.hard_factor
         if env.get_is_solved():
-            return self.hard_factor * 10.0
+            return 200.0 / self.hard_factor
         reward += self._compute_tube_rewards(env, src, dst)
         reward += self._compute_state_history_penalty(env)
         return reward
@@ -168,30 +168,29 @@ class AlphaSortTrainer:
         dst_top_color_streak = env.get_top_color_streak(dst)
         reward = 0.0
         if env.is_completed_tube(dst):
-            reward += self.tube_capacity
+            reward += self.tube_capacity / self.hard_factor
         else:
-            if not env.is_recent_state_key() and dst_top_color_streak >= self.tube_capacity - 2:
-                if dst_top_color_streak == self.tube_capacity - 1:
-                    reward += self.tube_capacity / 2.0
-                elif dst_top_color_streak == self.tube_capacity - 2:
-                    reward += self.tube_capacity / 4.0
+            if dst_top_color_streak == self.tube_capacity - 1:
+                reward += self.tube_capacity / self.hard_factor / 2.0
+            elif dst_top_color_streak == self.tube_capacity - 2:
+                reward += self.tube_capacity / self.hard_factor / 6.0
 
         src_top_color_streak = env.get_top_color_streak(src)
-        if not env.is_recent_state_key() and src_top_color_streak >= self.tube_capacity - 2:
-            if src_top_color_streak == self.tube_capacity - 1:
-                reward += self.tube_capacity / 2.0
-            elif src_top_color_streak == self.tube_capacity - 2:
-                reward += self.tube_capacity / 4.0
+        if src_top_color_streak == self.tube_capacity - 1:
+            reward += self.tube_capacity / self.hard_factor / 2.0
+        elif src_top_color_streak == self.tube_capacity - 2:
+            reward += self.tube_capacity / self.hard_factor / 6.0
         return reward
 
     def _compute_state_history_penalty(self, env) -> float:
         penalty = 0.0
+        step_factor = 1.0 + env.get_move_count() / self.max_step_count
         if env.is_recent_state_key():
-            penalty -= env.get_move_count() / self.hard_factor
-        if env.get_current_state_count() > self.num_tubes:
-            penalty -= -600.0 / self.hard_factor * env.get_current_state_count() / self.recursive_move_threshold
-        if env.get_last_state_count() > self.num_tubes * 2:
-            penalty -= -600.0 / self.hard_factor * env.get_last_state_count() / self.recursive_move_threshold
+            penalty -= 0.1 / self.hard_factor * step_factor
+        if env.get_current_state_count() > self.num_colors:
+            penalty -= 5.0 / self.hard_factor * env.get_current_state_count() / self.recursive_move_threshold * step_factor
+        if env.get_last_state_count() > self.num_colors:
+            penalty -= 5.0 / self.hard_factor * env.get_last_state_count() / self.recursive_move_threshold * step_factor
         return penalty
 
     def check_is_recursive_move(self, env) -> bool:
@@ -213,14 +212,14 @@ class AlphaSortTrainer:
 
             if not step_dones[i] and env.get_move_count() >= self.max_step_count:
                 step_dones[i] = True
-                rewards[i] = -350.0 / self.hard_factor
+                rewards[i] = -60.0 / self.hard_factor
                 continue
 
             src, dst = actions[i]
             env.move(src, dst)
             if self.check_is_recursive_move(env):
                 env.set_is_recursive_move(True)
-                rewards[i] = -400.0 / self.hard_factor
+                rewards[i] = -50.0 / self.hard_factor
                 step_dones[i] = True
             else:
                 rewards[i] += self.compute_action_reward(env, src, dst)
@@ -354,6 +353,6 @@ class AlphaSortTrainer:
             )
 
             # Save the model periodically
-            if episode > 0 and episode % 10 == 0:
+            if episode > 0 and episode % 5 == 0:
                 model_save_path = save_model(self.agent, self.num_colors, self.tube_capacity, episode)
                 logging.info(f"Model for the checkpoint at episode {episode: 03d} is saved to {model_save_path}.")

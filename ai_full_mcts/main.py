@@ -33,9 +33,11 @@ if __name__ == "__main__":
     previous_model_path = None
 
     train_game_size = [
-        {"num_colors": 6, "tube_capacity": 4, "episodes": 50},
-        {"num_colors": 8, "tube_capacity": 4, "episodes": 70},
-        {"num_colors": 10, "tube_capacity": 4, "episodes": 100},
+        {"num_colors": 4, "tube_capacity": 4, "episodes": 10},
+        {"num_colors": 5, "tube_capacity": 4, "episodes": 20},
+        {"num_colors": 7, "tube_capacity": 4, "episodes": 50},
+        # {"num_colors": 9, "tube_capacity": 4, "episodes": 70},
+        # {"num_colors": 11, "tube_capacity": 4, "episodes": 100},
         # {"num_colors": 12, "tube_capacity": 4, "episodes": 200},
         # {"num_colors": 6, "tube_capacity": 6, "episodes": 100},
         # {"num_colors": 8, "tube_capacity": 6, "episodes": 150},
