@@ -53,14 +53,16 @@ class AlphaSortTrainer:
         # Initialize the list of current environments and their corresponding rewards
         current_env_list = []
         for i, env in enumerate(self.envs):
-            if env.get_is_done() or env.have_valid_moves() == False:
+            if env.get_is_done() or not env.have_valid_moves():
                 continue
             current_env_list.append(CurrentEnv(env.clone(), 0, 0.0, i, 0))
         action_rewards = [defaultdict(float) for _ in range(self.num_envs)]
 
         probs_time = 0.0
+        value_time = 0.0
         mcts_time = 0.0
         num_envs_in_depth = defaultdict(int)
+
         for dd in range(mcts_depth + 1):
             num_envs_in_depth[dd] += len(current_env_list)
 
@@ -71,15 +73,21 @@ class AlphaSortTrainer:
             if not state_inputs:
                 break
 
-            # Batch policy network inference
+            # Batch inference for policy network
             probs_start_time = time.time_ns()
             with torch.no_grad():
                 logits = self.agent.policy_net(torch.tensor(np.array(state_inputs), dtype=torch.float32).to(self.agent.device))
                 probs = F.softmax(logits, dim=1).cpu().numpy()
             probs_time += time.time_ns() - probs_start_time
 
+            # Batch inference for value network
+            value_start_time = time.time_ns()
+            with torch.no_grad():
+                state_values = self.agent.value_net(torch.tensor(np.array(state_inputs), dtype=torch.float32).to(self.agent.device)).cpu().numpy()
+            value_time += time.time_ns() - value_start_time
+
             # Define per-environment processing
-            def process_env(current_env, valid_actions, valid_action_indices, prob):
+            def process_env(current_env, valid_actions, valid_action_indices, prob, state_value):
                 masked_probs = np.zeros_like(prob)
                 masked_probs[valid_action_indices] = prob[valid_action_indices]
                 if masked_probs.sum() == 0:
@@ -92,7 +100,11 @@ class AlphaSortTrainer:
                 if top_k > 0 and len(valid_action_indices) > top_k:
                     nonzero_count = np.sum(masked_probs > 1e-2)
                     if nonzero_count < top_k:
-                        logging.warning(f"Warning: only {nonzero_count} valid actions found, using all of them.")
+                        logging.warning(
+                            f"Warning: only {nonzero_count} valid actions found for environment "
+                            f"{current_env.original_env_idx} at depth {current_env.depth}. "
+                            "Using all of them."
+                        )
                         top_k_indices = valid_action_indices[masked_probs[valid_action_indices] > 0.01]
                     else:
                         top_k_indices = self.rng.choice(valid_action_indices, top_k, replace=False, p=masked_probs[valid_action_indices])
@@ -115,10 +127,13 @@ class AlphaSortTrainer:
                     sim_env.move(src, dst)
                     reward = self.compute_action_reward(sim_env, src, dst)
 
+                    # Combine state value with reward
+                    adjusted_reward = reward + discount_factor * state_value
+
                     next_env_action_idx = action_idx if current_env.depth == 0 else current_env.action_idx
                     next_env_list.append(
                         CurrentEnv(
-                            sim_env, current_env.depth + 1, reward * masked_probs[action_idx], current_env.original_env_idx, next_env_action_idx
+                            sim_env, current_env.depth + 1, adjusted_reward * masked_probs[action_idx], current_env.original_env_idx, next_env_action_idx
                         )
                     )
                 return next_env_list
@@ -130,7 +145,8 @@ class AlphaSortTrainer:
                     current_env,
                     current_env.env.get_valid_moves(),
                     np.array([self.action_to_index[action] for action in current_env.env.get_valid_moves()]),
-                    probs[idx]
+                    probs[idx],
+                    state_values[idx]
                 )
                 for idx, current_env in enumerate(current_env_list)
             ))
@@ -154,7 +170,7 @@ class AlphaSortTrainer:
             else:
                 action_indices.append(max(action_rewards[env_idx].items(), key=lambda x: x[1])[0])
 
-        return action_indices, probs_time, mcts_time, num_envs_in_depth
+        return action_indices, probs_time, value_time, mcts_time, num_envs_in_depth
 
     def compute_action_reward(self, env, src: int, dst: int) -> float:
         reward = -0.5 / self.hard_factor
@@ -261,6 +277,7 @@ class AlphaSortTrainer:
         self.logger.info(
             f"Episode {episode: 03d} | Elapsed Time "
             f"| Torch Prob actions: {cum_time_dict['probs_time'] / 10**9:.2f} seconds "
+            f"| Torch Value actions: {cum_time_dict['value_time'] / 10**9:.2f} seconds "
             f"| MCTS actions: {cum_time_dict['mcts_time'] / 10**9:.2f} seconds "
             f"| Select actions: {cum_time_dict['select_actions'] / 10**9:.2f} seconds "
             f"| Compute rewards: {cum_time_dict['compute_rewards'] / 10**9:.2f} seconds "
@@ -292,9 +309,10 @@ class AlphaSortTrainer:
 
                 # Get valid actions and select actions for each environment
                 select_actions_start = time.time_ns()
-                action_indices, probs_time, mcts_time, num_envs_in_depth_output = self.select_actions(mcts_depth, top_k, discount_factor)
+                action_indices, probs_time, value_time, mcts_time, num_envs_in_depth_output = self.select_actions(mcts_depth, top_k, discount_factor)
                 cum_time_dict["select_actions"] += time.time_ns() - select_actions_start
                 cum_time_dict["probs_time"] += probs_time
+                cum_time_dict["value_time"] += value_time
                 cum_time_dict["mcts_time"] += mcts_time
                 for depth, count in num_envs_in_depth_output.items():
                     num_envs_in_depth[depth] += count
@@ -336,7 +354,7 @@ class AlphaSortTrainer:
             # Update the target network periodically
             update_target_network_start = time.time_ns()
             if episode % self.agent.target_update_freq == 0:
-                self.agent.update_target_network()
+                self.agent.update_target_networks()
             cum_time_dict["update_target_network"] = time.time_ns() - update_target_network_start
 
             # Log training progress
