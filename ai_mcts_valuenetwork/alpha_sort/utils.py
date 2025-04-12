@@ -43,7 +43,7 @@ def save_model(agent, num_colors, tube_capacity, episode=None, save_dir="checkpo
     torch.save({
         "policy_net": agent.policy_net.state_dict(),
         "value_net": agent.value_net.state_dict()
-    }, "model.pth")
+    }, alpha_sort_model_path)
 
     logger.info(f"Policy network and value network are successfully saved to {alpha_sort_model_path}")
     return alpha_sort_model_path
