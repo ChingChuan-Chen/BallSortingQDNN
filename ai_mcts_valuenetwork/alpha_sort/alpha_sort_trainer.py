@@ -2,7 +2,6 @@ import time
 import random
 import datetime
 import logging
-import itertools
 from collections import deque, defaultdict, namedtuple
 
 import numpy as np
@@ -45,15 +44,17 @@ class AlphaSortTrainer:
         # initialize logger
         self.logger = logging.getLogger()
         self.tree = {}  # Initialize the shared tree dictionary
+        self.encoded_state_cache = {}  # Cache for encoded states
 
     def state_encode_helper(self, env):
+        if env.get_state_key() in self.encoded_state_cache:
+            return self.encoded_state_cache[env.get_state_key()]
         # Encode the state using the provided function
         encoded_state = env.get_encoded_state(self.max_num_colors, self.num_empty_tubes, self.max_tube_capacity)
         return np.array(encoded_state, dtype=np.float32)
 
     def select_actions(self, mcts_depth, discount_factor=0.9, c_puct=2.0):
         def get_tree_node(state_hash):
-            """Retrieve or initialize a tree node for the given state."""
             if state_hash not in self.tree:
                 self.tree[state_hash] = {
                     "visit_counts": defaultdict(int),
@@ -63,7 +64,6 @@ class AlphaSortTrainer:
             return self.tree[state_hash]
 
         def calculate_puct_score(node, action_idx, total_visits, c_puct):
-            """Calculate the PUCT score for an action."""
             visit_count = node["visit_counts"][action_idx]
             q_value = node["q_values"][action_idx]
             policy_prob = node["policy_probs"][action_idx]
@@ -96,7 +96,7 @@ class AlphaSortTrainer:
                 if current_env.env.get_is_done() or not current_env.env.have_valid_moves():
                     continue
 
-                state_hash = hash_state(self.state_encode_helper(current_env.env))
+                state_hash = current_env.env.get_state_key()
                 node = get_tree_node(state_hash)
 
                 # Initialize policy probabilities if not already set
@@ -137,13 +137,14 @@ class AlphaSortTrainer:
             current_env_list = next_env_list
 
         # Select the final action for each environment
+        decide_next_action_start_time = time.time_ns()
         action_indices = []
         for env_idx, env in enumerate(self.envs):
             if env.get_is_done():
                 action_indices.append(None)
                 continue
 
-            state_hash = hash_state(self.state_encode_helper(env))
+            state_hash = current_env.env.get_state_key()
             node = get_tree_node(state_hash)
 
             if not node["visit_counts"]:
@@ -158,10 +159,18 @@ class AlphaSortTrainer:
                 # Use a softmax over visit counts
                 visit_counts = np.array([node["visit_counts"][action_idx] for action_idx in node["visit_counts"]])
                 visit_probs = np.exp(visit_counts) / np.sum(np.exp(visit_counts))  # Softmax
-                selected_action_idx = np.random.choice(list(node["visit_counts"].keys()), p=visit_probs)
+                visit_probs[np.isnan(visit_probs)] = 0.0  # Handle NaN values
+                visit_probs = visit_probs / np.sum(visit_probs)  # Normalize to sum to 1
+                selected_action_idx = self.rng.choice(list(node["visit_counts"].keys()), p=visit_probs)
                 action_indices.append(selected_action_idx)
+        decide_next_action_time = time.time_ns() - decide_next_action_start_time
 
-        return action_indices, network_time, mcts_time
+        eplased_time_dict = {
+            "network_time": network_time,
+            "mcts_time": mcts_time,
+            "decide_next_action": decide_next_action_time,
+        }
+        return action_indices, eplased_time_dict
 
     def compute_action_reward(self, env, src: int, dst: int) -> float:
         reward = -0.5 / self.hard_factor
@@ -270,6 +279,7 @@ class AlphaSortTrainer:
             f"| Evaluate Networks: {cum_time_dict['network_time'] / 10**9:.2f} seconds "
             f"| MCTS actions: {cum_time_dict['mcts_time'] / 10**9:.2f} seconds "
             f"| Select actions: {cum_time_dict['select_actions'] / 10**9:.2f} seconds "
+            f"| Decide next action: {cum_time_dict['decide_next_action'] / 10**9:.2f} seconds "
             f"| Compute rewards: {cum_time_dict['compute_rewards'] / 10**9:.2f} seconds "
             f"| Train step: {cum_time_dict['train_step'] / 10**9:.2f} seconds "
             f"| Update target network: {cum_time_dict['update_target_network'] / 10**9:.2f} seconds"
@@ -277,7 +287,7 @@ class AlphaSortTrainer:
         for depth, count in num_envs_in_depth.items():
             self.logger.info(f"Episode {episode: 03d} | Depth {depth} | Number of environments: {count / step_count:.2f}")
 
-    def train(self, num_episodes, mcts_depth=3, discount_factor=0.9, train_steps_per_move=2):
+    def train(self, num_episodes, mcts_depth=8, discount_factor=0.9, train_steps_per_move=1, print_each_env=True):
         recent_results = deque(maxlen=10)
 
         for episode in range(num_episodes):
@@ -301,10 +311,11 @@ class AlphaSortTrainer:
                 # Get valid actions and select actions for each environment
                 # logging.info(f"Episode {episode: 03d} | Step {step_count: 03d} | Select actions")
                 select_actions_start = time.time_ns()
-                action_indices, network_time, mcts_time = self.select_actions(mcts_depth, discount_factor)
+                action_indices, eplased_time_dict = self.select_actions(mcts_depth, discount_factor)
                 cum_time_dict["select_actions"] += time.time_ns() - select_actions_start
-                cum_time_dict["network_time"] += network_time
-                cum_time_dict["mcts_time"] += mcts_time
+                cum_time_dict["network_time"] += eplased_time_dict["network_time"]
+                cum_time_dict["mcts_time"] += eplased_time_dict["mcts_time"]
+                cum_time_dict["decide_next_action"] += eplased_time_dict["decide_next_action"]
 
                 # Compute rewards and update environments
                 # logging.info(f"Episode {episode: 03d} | Step {step_count: 03d} | Compute rewards and dones")
@@ -333,12 +344,13 @@ class AlphaSortTrainer:
                 if np.sum([1 for env in self.envs if env.get_is_done()]) == self.num_envs:
                     break
 
-            for i, env in enumerate(self.envs):
-                logging.info(
-                    f"Env {i} | Move count: {env.get_move_count()} | Is solved: {env.get_is_solved()} "
-                    f"| Is Out of Moves: {not env.have_valid_moves()} | Is In Recursive Moves: {env.get_is_recursive_move()} "
-                    f"| State:\n{env.get_state()}"
-                )
+            if print_each_env:
+                for i, env in enumerate(self.envs):
+                    logging.info(
+                        f"Env {i} | Move count: {env.get_move_count()} | Is solved: {env.get_is_solved()} "
+                        f"| Is Out of Moves: {not env.have_valid_moves()} | Is In Recursive Moves: {env.get_is_recursive_move()} "
+                        f"| State:\n{env.get_state()}"
+                    )
 
             # Update the target network periodically
             update_target_network_start = time.time_ns()
@@ -360,6 +372,6 @@ class AlphaSortTrainer:
             )
 
             # Save the model periodically
-            if episode > 0 and episode % 20 == 0:
+            if episode > 0 and episode % 5 == 0:
                 model_save_path = save_model(self.agent, self.num_colors, self.tube_capacity, episode)
                 logging.info(f"Model for the checkpoint at episode {episode: 03d} is saved to {model_save_path}.")

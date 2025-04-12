@@ -31,16 +31,17 @@ if __name__ == "__main__":
     max_num_colors = 12
     num_empty_tubes = 2
     max_number_tubes = max_num_colors + num_empty_tubes
-    n_envs = 256
+    n_envs = 128
     train_steps_per_move = 1
     batch_size = n_envs * train_steps_per_move
-    previous_model_path = 'checkpoints/alphasort_model_4c_4cap_ep0080.pth'
+    previous_model_path = 'checkpoints/alphasort_model_5c_4cap_ep0005.pth'
 
     train_game_size = [
-        {"num_colors": 4, "tube_capacity": 4, "episodes": 200},
-        {"num_colors": 5, "tube_capacity": 4, "episodes": 250},
-        {"num_colors": 7, "tube_capacity": 4, "episodes": 300},
-        # {"num_colors": 9, "tube_capacity": 4, "episodes": 70},
+        # {"num_colors": 4, "tube_capacity": 4, "episodes": 50},
+        {"num_colors": 5, "tube_capacity": 4, "episodes": 100},
+        {"num_colors": 6, "tube_capacity": 4, "episodes": 100},
+        {"num_colors": 7, "tube_capacity": 4, "episodes": 200},
+        {"num_colors": 8, "tube_capacity": 4, "episodes": 200},
         # {"num_colors": 11, "tube_capacity": 4, "episodes": 100},
         # {"num_colors": 12, "tube_capacity": 4, "episodes": 200},
         # {"num_colors": 6, "tube_capacity": 6, "episodes": 100},
@@ -75,7 +76,7 @@ if __name__ == "__main__":
         trainer = AlphaSortTrainer(envs, agent, max_num_colors, max_tube_capacity)
 
         try:
-            trainer.train(episodes, mcts_depth=8, train_steps_per_move=train_steps_per_move)
+            trainer.train(episodes, mcts_depth=10, train_steps_per_move=train_steps_per_move, print_each_env=False)
         except Exception as e:
             logger.error(f"An error occurred during training: {e} and the traceback is {traceback.format_exc()}")
             raise

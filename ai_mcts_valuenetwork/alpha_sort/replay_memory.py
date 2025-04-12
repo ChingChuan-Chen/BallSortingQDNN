@@ -1,9 +1,12 @@
 import random
 from collections import deque
+import numpy as np
 
 
 class ReplayMemory:
-    """Replay memory for storing transitions."""
+    # Initialize a random number generator
+    rng = np.random.default_rng(random.randint(0, 2**31 - 1))
+
     def __init__(self, capacity=10000):
         self.buffer = deque(maxlen=capacity)
 
@@ -13,7 +16,8 @@ class ReplayMemory:
 
     def sample(self, batch_size):
         """Sample a batch of transitions."""
-        return random.sample(self.buffer, batch_size)
+        indices = self.rng.choice(len(self.buffer), batch_size, replace=False)
+        return [self.buffer[idx] for idx in indices]
 
     def __len__(self):
         """Return the current size of the replay memory."""
