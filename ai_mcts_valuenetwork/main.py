@@ -2,6 +2,8 @@ import sys
 import os
 import logging
 import traceback
+import faulthandler
+faulthandler.enable()
 
 # Configure the logger
 logging.basicConfig(

@@ -117,11 +117,10 @@ class AlphaSortTrainer:
                 best_action_idx = max(puct_scores, key=puct_scores.get)
                 best_action = self.index_to_action[best_action_idx]
 
-                # Simulate the environment
-                sim_env = current_env.env.clone()
+                # move the best action
                 src, dst = best_action
-                sim_env.move(src, dst)
-                reward = self.compute_action_reward(sim_env, src, dst)
+                current_env.env.move(src, dst)
+                reward = self.compute_action_reward(current_env.env, src, dst)
 
                 # Update Q-values and visit counts
                 node["visit_counts"][best_action_idx] += 1
@@ -130,7 +129,7 @@ class AlphaSortTrainer:
                 # Add the next environment to the list
                 next_env_list.append(
                     CurrentEnv(
-                        sim_env, current_env.depth + 1, reward, current_env.original_env_idx, best_action_idx
+                        current_env.env, current_env.depth + 1, reward, current_env.original_env_idx, best_action_idx
                     )
                 )
             mcts_time += time.time_ns() - mcts_start_time
@@ -139,16 +138,24 @@ class AlphaSortTrainer:
 
         # Select the final action for each environment
         action_indices = []
-        for env in self.envs:
+        for env_idx, env in enumerate(self.envs):
             if env.get_is_done():
                 action_indices.append(None)
                 continue
 
             state_hash = hash_state(self.state_encode_helper(env))
             node = get_tree_node(state_hash)
+
             if not node["visit_counts"]:
-                action_indices.append(None)
+                # Fallback: Select a random valid action if no actions were explored
+                valid_actions = env.get_valid_moves()
+                if valid_actions:
+                    random_action = random.choice(valid_actions)
+                    action_indices.append(self.action_to_index[random_action])
+                else:
+                    action_indices.append(None)  # No valid actions available
             else:
+                # Select the action with the highest visit count
                 action_indices.append(max(node["visit_counts"], key=node["visit_counts"].get))
 
         return action_indices, network_time, mcts_time
@@ -203,7 +210,7 @@ class AlphaSortTrainer:
         step_dones = np.zeros(self.num_envs, dtype=bool)
 
         for i, env in enumerate(self.envs):
-            if env.get_is_done():
+            if env.get_is_done() or actions[i] is None:
                 step_dones[i] = True
                 continue
 
@@ -274,20 +281,22 @@ class AlphaSortTrainer:
             # Reset all environments
             for env in self.envs:
                 env.reset()
+
+            # Initialize variables for tracking time
+            cum_time_dict = defaultdict(float)
+            num_envs_in_depth = defaultdict(int)
             total_rewards = np.zeros(self.num_envs, dtype=np.float32)
             step_count = 0
 
             start_time = datetime.datetime.now()
             self.logger.info(f"Episode {episode: 03d} | Start training for Episode {episode: 03d}")
 
-            # Initialize variables for tracking time
-            cum_time_dict = defaultdict(float)
-            num_envs_in_depth = defaultdict(int)
             while step_count < self.max_step_count:
-                if step_count > 0 and step_count % 10 == 0:
+                if step_count > 0 and step_count % 5 == 0:
                     self.logging_progress(episode, step_count, total_rewards, cum_time_dict, num_envs_in_depth)
 
                 # Get valid actions and select actions for each environment
+                # logging.info(f"Episode {episode: 03d} | Step {step_count: 03d} | Select actions")
                 select_actions_start = time.time_ns()
                 action_indices, network_time, mcts_time = self.select_actions(mcts_depth, discount_factor)
                 cum_time_dict["select_actions"] += time.time_ns() - select_actions_start
@@ -298,17 +307,20 @@ class AlphaSortTrainer:
                 actions = [self.index_to_action[idx] if idx is not None else (-1, -1) for idx in action_indices]
 
                 # Compute rewards and update environments
+                # logging.info(f"Episode {episode: 03d} | Step {step_count: 03d} | Compute rewards and dones")
                 compute_rewards_start = time.time_ns()
                 encoded_states, encoded_next_states, rewards, step_dones = self.compute_rewards_and_dones(actions)
                 cum_time_dict["compute_rewards"] += time.time_ns() - compute_rewards_start
 
                 # Store transitions in replay memory
+                # logging.info(f"Episode {episode: 03d} | Step {step_count: 03d} | Store transitions")
                 self.store_transitions(encoded_states, action_indices, rewards, encoded_next_states, step_dones)
                 for i, env in enumerate(self.envs):
                     if step_dones[i]:
                         env.set_is_done(True)
 
                 # Train the agent
+                # logging.info(f"Episode {episode: 03d} | Step {step_count: 03d} | Train agent")
                 train_step_start = time.time_ns()
                 for _ in range(train_steps_per_move):
                     self.agent.train_step()
