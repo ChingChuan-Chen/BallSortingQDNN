@@ -288,30 +288,26 @@ def test_undo_move(env):
 
 
 def test_state_key(env):
-    # Get the state key
     state_key = env.get_state_key()
-    print("State Key:", state_key)
-
-    # Ensure the state key is consistent
     assert isinstance(state_key, str)
     assert len(state_key) > 0
 
 
-def test_is_recent_state_key(env):
-    assert env.is_recent_state_key() is False
+def test_get_recent_count(env):
+    assert env.get_recent_count() == 0
     for _ in range(6):
         env.move(1, 4)
         env.move(4, 1)
     assert env.get_current_state_count() == 7
     assert env.get_last_state_count() == 6
-    assert env.is_recent_state_key() is True
+    assert env.get_recent_count() > 1
 
     # check if it is in recursive move
     for _ in range(20):
         env.move(1, 4)
         env.move(4, 1)
 
-    assert env.is_recent_state_key() is True
+    assert env.get_recent_count() > 1
     assert env.get_current_state_count() == 27
     assert env.get_last_state_count() == 26
 

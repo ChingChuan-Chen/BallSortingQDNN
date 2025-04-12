@@ -49,7 +49,7 @@ public:
 
     // methods for state key and history
     std::string get_state_key() { return state_key; }
-    bool is_recent_state_key() const;
+    int get_recent_count() const;
     int get_current_state_count();
     int get_last_state_count();
 

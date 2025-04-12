@@ -31,8 +31,10 @@ if __name__ == "__main__":
     max_num_colors = 12
     num_empty_tubes = 2
     max_number_tubes = max_num_colors + num_empty_tubes
-    n_envs = 64
-    previous_model_path = "models/alphasort_model_5c_4cap.pth"
+    n_envs = 256
+    train_steps_per_move = 1
+    batch_size = n_envs * train_steps_per_move
+    previous_model_path = 'checkpoints/alphasort_model_4c_4cap_ep0080.pth'
 
     train_game_size = [
         {"num_colors": 4, "tube_capacity": 4, "episodes": 200},
@@ -60,7 +62,7 @@ if __name__ == "__main__":
 
         envs = [BallSortEnv(num_colors, tube_capacity, num_empty_tubes) for _ in range(n_envs)]
 
-        agent = AlphaSortAgent(num_colors, max_num_colors, max_tube_capacity, device, batch_size=64)
+        agent = AlphaSortAgent(num_colors, max_num_colors, max_tube_capacity, device, batch_size=batch_size)
 
         # Create a fresh or shared agent (shared helps retain learning across stages)
         if previous_model_path is not None:
@@ -73,7 +75,7 @@ if __name__ == "__main__":
         trainer = AlphaSortTrainer(envs, agent, max_num_colors, max_tube_capacity)
 
         try:
-            trainer.train(episodes, mcts_depth=5, train_steps_per_move=1)
+            trainer.train(episodes, mcts_depth=8, train_steps_per_move=train_steps_per_move)
         except Exception as e:
             logger.error(f"An error occurred during training: {e} and the traceback is {traceback.format_exc()}")
             raise

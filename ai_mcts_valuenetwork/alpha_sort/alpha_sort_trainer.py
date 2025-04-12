@@ -155,8 +155,11 @@ class AlphaSortTrainer:
                 else:
                     action_indices.append(None)  # No valid actions available
             else:
-                # Select the action with the highest visit count
-                action_indices.append(max(node["visit_counts"], key=node["visit_counts"].get))
+                # Use a softmax over visit counts
+                visit_counts = np.array([node["visit_counts"][action_idx] for action_idx in node["visit_counts"]])
+                visit_probs = np.exp(visit_counts) / np.sum(np.exp(visit_counts))  # Softmax
+                selected_action_idx = np.random.choice(list(node["visit_counts"].keys()), p=visit_probs)
+                action_indices.append(selected_action_idx)
 
         return action_indices, network_time, mcts_time
 
@@ -188,13 +191,14 @@ class AlphaSortTrainer:
 
     def _compute_state_history_penalty(self, env) -> float:
         penalty = 0.0
-        step_factor = 1.0 + env.get_move_count() / self.max_step_count
-        if env.is_recent_state_key():
-            penalty -= 1.0 / self.hard_factor * step_factor
+        step_factor = 1.0 + env.get_move_count() / self.max_step_count * 4.0
+        recent_count = env.get_recent_count()
+        if recent_count > 1:
+            penalty -= 10.0 / self.hard_factor * (1 + recent_count / env.get_move_count()) * step_factor
         if env.get_current_state_count() > self.num_colors:
-            penalty -= 10.0 / self.hard_factor * env.get_current_state_count() / self.recursive_move_threshold * step_factor
+            penalty -= 50.0 / self.hard_factor * env.get_current_state_count() / self.recursive_move_threshold * step_factor ** 2
         if env.get_last_state_count() > self.num_colors:
-            penalty -= 10.0 / self.hard_factor * env.get_last_state_count() / self.recursive_move_threshold * step_factor
+            penalty -= 50.0 / self.hard_factor * env.get_last_state_count() / self.recursive_move_threshold * step_factor ** 2
         return penalty
 
     def check_is_recursive_move(self, env) -> bool:
@@ -216,7 +220,7 @@ class AlphaSortTrainer:
 
             if not step_dones[i] and env.get_move_count() >= self.max_step_count:
                 step_dones[i] = True
-                rewards[i] = -60.0 / self.hard_factor
+                rewards[i] = -100.0 / self.hard_factor
                 continue
 
             src, dst = self.index_to_action[action_indices[i]]
@@ -233,19 +237,17 @@ class AlphaSortTrainer:
 
     def store_transitions(self, encoded_states, action_indices, rewards, encoded_next_states, step_dones):
         for i, env in enumerate(self.envs):
-            if env.get_is_done():
+            if env.get_is_done() or action_indices[i] is None:
                 continue
-            if action_indices[i] is None:
-                self.agent.store_transition(encoded_states[i], 0, -100.0, encoded_states[i], True)
-            else:
-                priority = 1.0 if not env.is_recent_state_key() else 0.35
-                self.agent.store_transition(
-                    encoded_states[i],
-                    action_indices[i],
-                    rewards[i] * priority,
-                    encoded_next_states[i],
-                    step_dones[i]
-                )
+
+            priority = 1.0 if env.get_recent_count() > 1 else 0.35
+            self.agent.store_transition(
+                encoded_states[i],
+                action_indices[i],
+                rewards[i] * priority,
+                encoded_next_states[i],
+                step_dones[i]
+            )
 
     def logging_progress(self, episode, step_count, total_rewards, cum_time_dict, num_envs_in_depth):
         solved_envs_count = np.sum([env.get_is_solved() for env in self.envs])
