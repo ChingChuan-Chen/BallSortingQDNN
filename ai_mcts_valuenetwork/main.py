@@ -32,7 +32,7 @@ if __name__ == "__main__":
     num_empty_tubes = 2
     max_number_tubes = max_num_colors + num_empty_tubes
     n_envs = 256
-    previous_model_path = None
+    previous_model_path = "models/alphasort_model_4c_4cap.pth"
 
     train_game_size = [
         {"num_colors": 4, "tube_capacity": 4, "episodes": 50},

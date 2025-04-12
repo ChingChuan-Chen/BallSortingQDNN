@@ -88,16 +88,18 @@ class AlphaSortAgent:
     def load_pretrained_weights(self, pretrained_model_path, map_location=None):
         # Load the pretrained state dictionary
         pretrained_state = torch.load(pretrained_model_path, map_location=map_location)
+        policy_pretrained_state = pretrained_state["policy_net"]
+        value_pretrained_state = pretrained_state["value_net"]
 
         # Load weights for the policy network
         policy_state = self.policy_net.state_dict()
-        old_action_dim = pretrained_state["policy_net.fc2.weight"].shape[0]  # Output size of old policy network
+        old_action_dim = policy_pretrained_state["fc2.weight"].shape[0]  # Output size of old policy network
         new_action_dim = policy_state["fc2.weight"].shape[0]  # Output size of new policy network
 
         # Transfer matching layers for the policy network
-        for name, param in pretrained_state.items():
-            if name.startswith("policy_net.") and name[11:] in policy_state and param.shape == policy_state[name[11:]].shape:
-                policy_state[name[11:]] = param  # Transfer matching weights
+        for name, param in policy_pretrained_state.items():
+            if param.shape == policy_state[name].shape:
+                policy_state[name] = param  # Transfer matching weights
 
         # Reinitialize output layer if action_dim changed
         if old_action_dim != new_action_dim:
@@ -108,8 +110,8 @@ class AlphaSortAgent:
 
         # Load weights for the value network
         value_state = self.value_net.state_dict()
-        for name, param in pretrained_state.items():
-            if name.startswith("value_net.") and name[10:] in value_state and param.shape == value_state[name[10:]].shape:
-                value_state[name[10:]] = param  # Transfer matching weights
+        for name, param in value_pretrained_state.items():
+            if param.shape == value_state[name].shape:
+                value_state[name] = param  # Transfer matching weights
 
         self.value_net.load_state_dict(value_state, strict=False)

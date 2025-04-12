@@ -32,7 +32,7 @@ class AlphaSortTrainer:
         self.num_envs = len(envs)
         self.max_tubes = max_num_colors + self.num_empty_tubes
         self.max_step_count = 75 * envs[0].get_num_colors()
-        self.recursive_move_threshold = self.num_tubes * self.tube_capacity
+        self.recursive_move_threshold = self.num_tubes * self.tube_capacity * 0.4
         self.hard_factor = self.num_colors / self.tube_capacity * (1.0 + self.num_empty_tubes / self.num_colors)
 
         # Precompute all possible actions
@@ -204,13 +204,13 @@ class AlphaSortTrainer:
             return True
         return False
 
-    def compute_rewards_and_dones(self, actions):
+    def compute_rewards_and_dones(self, action_indices):
         encoded_states = np.array([self.state_encode_helper(env) for env in self.envs])
         rewards = np.zeros(self.num_envs, dtype=np.float32)
         step_dones = np.zeros(self.num_envs, dtype=bool)
 
         for i, env in enumerate(self.envs):
-            if env.get_is_done() or actions[i] is None:
+            if env.get_is_done() or action_indices[i] is None:
                 step_dones[i] = True
                 continue
 
@@ -219,7 +219,7 @@ class AlphaSortTrainer:
                 rewards[i] = -60.0 / self.hard_factor
                 continue
 
-            src, dst = actions[i]
+            src, dst = self.index_to_action[action_indices[i]]
             env.move(src, dst)
             if self.check_is_recursive_move(env):
                 env.set_is_recursive_move(True)
@@ -292,7 +292,7 @@ class AlphaSortTrainer:
             self.logger.info(f"Episode {episode: 03d} | Start training for Episode {episode: 03d}")
 
             while step_count < self.max_step_count:
-                if step_count > 0 and step_count % 5 == 0:
+                if step_count > 0 and step_count % 20 == 0:
                     self.logging_progress(episode, step_count, total_rewards, cum_time_dict, num_envs_in_depth)
 
                 # Get valid actions and select actions for each environment
@@ -303,13 +303,10 @@ class AlphaSortTrainer:
                 cum_time_dict["network_time"] += network_time
                 cum_time_dict["mcts_time"] += mcts_time
 
-                # Map action indices to actions
-                actions = [self.index_to_action[idx] if idx is not None else (-1, -1) for idx in action_indices]
-
                 # Compute rewards and update environments
                 # logging.info(f"Episode {episode: 03d} | Step {step_count: 03d} | Compute rewards and dones")
                 compute_rewards_start = time.time_ns()
-                encoded_states, encoded_next_states, rewards, step_dones = self.compute_rewards_and_dones(actions)
+                encoded_states, encoded_next_states, rewards, step_dones = self.compute_rewards_and_dones(action_indices)
                 cum_time_dict["compute_rewards"] += time.time_ns() - compute_rewards_start
 
                 # Store transitions in replay memory
