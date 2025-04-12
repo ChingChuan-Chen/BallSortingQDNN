@@ -31,7 +31,7 @@ class AlphaSortTrainer:
         self.num_envs = len(envs)
         self.max_tubes = max_num_colors + self.num_empty_tubes
         self.max_step_count = 75 * envs[0].get_num_colors()
-        self.recursive_move_threshold = self.num_tubes * self.tube_capacity * 0.4
+        self.recursive_move_threshold = self.num_tubes * self.tube_capacity * 0.35
         self.hard_factor = self.num_colors / self.tube_capacity * (1.0 + self.num_empty_tubes / self.num_colors)
 
         # Precompute all possible actions
@@ -136,6 +136,14 @@ class AlphaSortTrainer:
 
             current_env_list = next_env_list
 
+        def stable_softmax(x):
+            x_max = np.max(x)
+            exp_x = np.exp(x - x_max)
+            prob = exp_x / np.sum(exp_x)
+            prob[np.isnan(prob)] = 0.0
+            prob = prob / np.sum(prob)  # Normalize to sum to 1
+            return prob
+
         # Select the final action for each environment
         decide_next_action_start_time = time.time_ns()
         action_indices = []
@@ -158,9 +166,7 @@ class AlphaSortTrainer:
             else:
                 # Use a softmax over visit counts
                 visit_counts = np.array([node["visit_counts"][action_idx] for action_idx in node["visit_counts"]])
-                visit_probs = np.exp(visit_counts) / np.sum(np.exp(visit_counts))  # Softmax
-                visit_probs[np.isnan(visit_probs)] = 0.0  # Handle NaN values
-                visit_probs = visit_probs / np.sum(visit_probs)  # Normalize to sum to 1
+                visit_probs = stable_softmax(visit_counts)
                 selected_action_idx = self.rng.choice(list(node["visit_counts"].keys()), p=visit_probs)
                 action_indices.append(selected_action_idx)
         decide_next_action_time = time.time_ns() - decide_next_action_start_time
@@ -175,7 +181,7 @@ class AlphaSortTrainer:
     def compute_action_reward(self, env, src: int, dst: int) -> float:
         reward = -0.5 / self.hard_factor
         if env.get_is_solved():
-            return 300.0 / self.hard_factor
+            return 600.0 * self.hard_factor
         reward += self._compute_tube_rewards(env, src, dst)
         reward += self._compute_state_history_penalty(env)
         return reward
@@ -184,34 +190,34 @@ class AlphaSortTrainer:
         dst_top_color_streak = env.get_top_color_streak(dst)
         reward = 0.0
         if env.is_completed_tube(dst):
-            reward += self.tube_capacity / self.hard_factor
+            reward += self.hard_factor * 2.0
         else:
             if dst_top_color_streak == self.tube_capacity - 1:
-                reward += self.tube_capacity / self.hard_factor / 2.0
+                reward += self.hard_factor
             elif dst_top_color_streak == self.tube_capacity - 2:
-                reward += self.tube_capacity / self.hard_factor / 6.0
+                reward += self.hard_factor / 3.0
 
         src_top_color_streak = env.get_top_color_streak(src)
         if src_top_color_streak == self.tube_capacity - 1:
-            reward += self.tube_capacity / self.hard_factor / 2.0
+            reward += self.hard_factor
         elif src_top_color_streak == self.tube_capacity - 2:
-            reward += self.tube_capacity / self.hard_factor / 6.0
+            reward += self.hard_factor / 3.0
         return reward
 
     def _compute_state_history_penalty(self, env) -> float:
         penalty = 0.0
-        step_factor = 1.0 + env.get_move_count() / self.max_step_count * 4.0
+        step_factor = 1.0 + env.get_move_count() / self.max_step_count * 2.0
         recent_count = env.get_recent_count()
         if recent_count > 1:
-            penalty -= 10.0 / self.hard_factor * (1 + recent_count / env.get_move_count()) * step_factor
+            penalty -= 5.0 / self.hard_factor * (1 + recent_count / env.get_move_count()) * step_factor
         if env.get_current_state_count() > self.num_colors:
-            penalty -= 50.0 / self.hard_factor * env.get_current_state_count() / self.recursive_move_threshold * step_factor ** 2
+            penalty -= 25.0 / self.hard_factor * env.get_current_state_count() / self.recursive_move_threshold * step_factor
         if env.get_last_state_count() > self.num_colors:
-            penalty -= 50.0 / self.hard_factor * env.get_last_state_count() / self.recursive_move_threshold * step_factor ** 2
+            penalty -= 25.0 / self.hard_factor * env.get_last_state_count() / self.recursive_move_threshold * step_factor
         return penalty
 
     def check_is_recursive_move(self, env) -> bool:
-        if env.get_move_count() < self.recursive_move_threshold * 3:
+        if env.get_move_count() < self.recursive_move_threshold * 2:
             return False
         if env.get_current_state_count() > self.recursive_move_threshold and env.get_last_state_count() > self.recursive_move_threshold:
             return True
@@ -236,7 +242,7 @@ class AlphaSortTrainer:
             env.move(src, dst)
             if self.check_is_recursive_move(env):
                 env.set_is_recursive_move(True)
-                rewards[i] = -50.0 / self.hard_factor
+                rewards[i] = -500.0 / self.hard_factor
                 step_dones[i] = True
             else:
                 rewards[i] += self.compute_action_reward(env, src, dst)
@@ -268,9 +274,9 @@ class AlphaSortTrainer:
         reach_recursive_moves_rate = np.sum([1 for env in self.envs if not env.get_is_solved() and env.get_is_recursive_move()]) / self.num_envs
         done_rate = np.sum([1 for env in self.envs if env.get_is_done()]) / self.num_envs
         self.logger.info(
-            f"Episode {episode: 03d} | Step {step_count: 03d} | Solve Rate: {solve_rate * 100.0: 6.2f}% "
-            f"| Avg. Solve Rewards: {avg_solve_reward: 6.2f} | Avg. Unsolved Rewards: {avg_unsolved_reward: 6.2f} "
-            f"| Reach Recursive Moves Rate: {reach_recursive_moves_rate * 100.0: 6.2f}% "
+            f"Episode {episode: 03d} | Step {step_count: 03d} | Solved Rate: {solve_rate * 100.0: 6.2f}% "
+            f"| Avg. Solved/Unsolved Rewards: {avg_solve_reward: 6.2f} / {avg_unsolved_reward: 6.2f} "
+            f"| Recursive Moves Rate: {reach_recursive_moves_rate * 100.0: 6.2f}% "
             f"| Out of Move Rate: {out_of_move_rate * 100.0: 6.2f}% | Done Rate: {done_rate * 100.0: 6.2f}%"
         )
 
@@ -278,8 +284,8 @@ class AlphaSortTrainer:
             f"Episode {episode: 03d} | Elapsed Time "
             f"| Evaluate Networks: {cum_time_dict['network_time'] / 10**9:.2f} seconds "
             f"| MCTS actions: {cum_time_dict['mcts_time'] / 10**9:.2f} seconds "
-            f"| Select actions: {cum_time_dict['select_actions'] / 10**9:.2f} seconds "
             f"| Decide next action: {cum_time_dict['decide_next_action'] / 10**9:.2f} seconds "
+            f"| Select actions: {cum_time_dict['select_actions'] / 10**9:.2f} seconds "
             f"| Compute rewards: {cum_time_dict['compute_rewards'] / 10**9:.2f} seconds "
             f"| Train step: {cum_time_dict['train_step'] / 10**9:.2f} seconds "
             f"| Update target network: {cum_time_dict['update_target_network'] / 10**9:.2f} seconds"

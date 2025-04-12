@@ -34,7 +34,7 @@ if __name__ == "__main__":
     n_envs = 128
     train_steps_per_move = 1
     batch_size = n_envs * train_steps_per_move
-    previous_model_path = 'checkpoints/alphasort_model_5c_4cap_ep0005.pth'
+    previous_model_path = 'checkpoints/alphasort_model_5c_4cap_ep0010.pth'
 
     train_game_size = [
         # {"num_colors": 4, "tube_capacity": 4, "episodes": 50},
