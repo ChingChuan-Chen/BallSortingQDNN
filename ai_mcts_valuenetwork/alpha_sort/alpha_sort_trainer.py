@@ -44,133 +44,114 @@ class AlphaSortTrainer:
 
         # initialize logger
         self.logger = logging.getLogger()
+        self.tree = {}  # Initialize the shared tree dictionary
 
     def state_encode_helper(self, env):
         # Encode the state using the provided function
-        return env.get_encoded_state(self.max_num_colors, self.num_empty_tubes, self.max_tube_capacity)
+        encoded_state = env.get_encoded_state(self.max_num_colors, self.num_empty_tubes, self.max_tube_capacity)
+        return np.array(encoded_state, dtype=np.float32)
 
-    def select_actions(self, mcts_depth, top_k, discount_factor=0.9):
-        # Initialize the list of current environments and their corresponding rewards
-        current_env_list = []
-        for i, env in enumerate(self.envs):
-            if env.get_is_done() or not env.have_valid_moves():
-                continue
-            current_env_list.append(CurrentEnv(env.clone(), 0, 0.0, i, 0))
-        action_rewards = [defaultdict(float) for _ in range(self.num_envs)]
+    def select_actions(self, mcts_depth, discount_factor=0.9, c_puct=1.0):
+        def get_tree_node(state_hash):
+            """Retrieve or initialize a tree node for the given state."""
+            if state_hash not in self.tree:
+                self.tree[state_hash] = {
+                    "visit_counts": defaultdict(int),
+                    "q_values": defaultdict(float),
+                    "policy_probs": None,
+                }
+            return self.tree[state_hash]
 
-        probs_time = 0.0
-        value_time = 0.0
+        def calculate_puct_score(node, action_idx, total_visits, c_puct):
+            """Calculate the PUCT score for an action."""
+            visit_count = node["visit_counts"][action_idx]
+            q_value = node["q_values"][action_idx]
+            policy_prob = node["policy_probs"][action_idx]
+            return q_value + c_puct * policy_prob * np.sqrt(total_visits) / (1 + visit_count)
+
+        current_env_list = [
+            CurrentEnv(env.clone(), 0, 0.0, i, 0)
+            for i, env in enumerate(self.envs)
+            if not env.get_is_done() and env.have_valid_moves()
+        ]
+
+        network_time = 0.0
         mcts_time = 0.0
-        num_envs_in_depth = defaultdict(int)
-
         for dd in range(mcts_depth + 1):
-            num_envs_in_depth[dd] += len(current_env_list)
-
-            state_inputs = []
-            for idx, current_env in enumerate(current_env_list):
-                state_inputs.append(self.state_encode_helper(current_env.env))
-
+            state_inputs = [self.state_encode_helper(env.env) for env in current_env_list]
             if not state_inputs:
                 break
 
-            # Batch inference for policy network
-            probs_start_time = time.time_ns()
+            # Batch inference for policy and value networks
+            network_start_time = time.time_ns()
             with torch.no_grad():
                 logits = self.agent.policy_net(torch.tensor(np.array(state_inputs), dtype=torch.float32).to(self.agent.device))
                 probs = F.softmax(logits, dim=1).cpu().numpy()
-            probs_time += time.time_ns() - probs_start_time
-
-            # Batch inference for value network
-            value_start_time = time.time_ns()
-            with torch.no_grad():
                 state_values = self.agent.value_net(torch.tensor(np.array(state_inputs), dtype=torch.float32).to(self.agent.device)).cpu().numpy()
-            value_time += time.time_ns() - value_start_time
+            network_time += time.time_ns() - network_start_time
 
-            # Define per-environment processing
-            def process_env(current_env, valid_actions, valid_action_indices, prob, state_value):
-                masked_probs = np.zeros_like(prob)
-                masked_probs[valid_action_indices] = prob[valid_action_indices]
-                if masked_probs.sum() == 0:
-                    masked_probs[valid_action_indices] = 1.0 / len(valid_action_indices)
-                else:
-                    masked_probs /= masked_probs.sum()
-
-                valid_action_indices_loop = []
-                valid_actions_loop = []
-                if top_k > 0 and len(valid_action_indices) > top_k:
-                    nonzero_count = np.sum(masked_probs > 1e-2)
-                    if nonzero_count < top_k:
-                        logging.warning(
-                            f"Warning: only {nonzero_count} valid actions found for environment "
-                            f"{current_env.original_env_idx} at depth {current_env.depth}. "
-                            "Using all of them."
-                        )
-                        top_k_indices = valid_action_indices[masked_probs[valid_action_indices] > 0.01]
-                    else:
-                        top_k_indices = self.rng.choice(valid_action_indices, top_k, replace=False, p=masked_probs[valid_action_indices])
-
-                    for action, action_idx in zip(valid_actions, valid_action_indices):
-                        if action_idx in top_k_indices:
-                            valid_action_indices_loop.append(action_idx)
-                            valid_actions_loop.append(action)
-                        else:
-                            masked_probs[action_idx] = 0.0
-                    masked_probs /= masked_probs.sum()
-                else:
-                    valid_action_indices_loop = valid_action_indices
-                    valid_actions_loop = valid_actions
-
-                next_env_list = []
-                for action, action_idx in zip(valid_actions_loop, valid_action_indices_loop):
-                    sim_env = current_env.env.clone()
-                    src, dst = action
-                    sim_env.move(src, dst)
-                    reward = self.compute_action_reward(sim_env, src, dst)
-
-                    # Combine state value with reward
-                    adjusted_reward = reward + discount_factor * state_value
-
-                    next_env_action_idx = action_idx if current_env.depth == 0 else current_env.action_idx
-                    next_env_list.append(
-                        CurrentEnv(
-                            sim_env, current_env.depth + 1, adjusted_reward * masked_probs[action_idx], current_env.original_env_idx, next_env_action_idx
-                        )
-                    )
-                return next_env_list
-
-            # Run parallel environment processing
             mcts_start_time = time.time_ns()
-            next_env_list = list(itertools.chain.from_iterable(
-                process_env(
-                    current_env,
-                    current_env.env.get_valid_moves(),
-                    np.array([self.action_to_index[action] for action in current_env.env.get_valid_moves()]),
-                    probs[idx],
-                    state_values[idx]
+            next_env_list = []
+            for idx, current_env in enumerate(current_env_list):
+                if current_env.env.get_is_done() or not current_env.env.have_valid_moves():
+                    continue
+
+                state_hash = hash_state(self.state_encode_helper(current_env.env))
+                node = get_tree_node(state_hash)
+
+                # Initialize policy probabilities if not already set
+                if node["policy_probs"] is None:
+                    node["policy_probs"] = probs[idx]
+
+                valid_actions = current_env.env.get_valid_moves()
+                valid_action_indices = [self.action_to_index[action] for action in valid_actions]
+
+                # Calculate PUCT scores for valid actions
+                total_visits = sum(node["visit_counts"].values()) + 1
+                puct_scores = {
+                    action_idx: calculate_puct_score(node, action_idx, total_visits, c_puct)
+                    for action_idx in valid_action_indices
+                }
+
+                # Select the action with the highest PUCT score
+                best_action_idx = max(puct_scores, key=puct_scores.get)
+                best_action = self.index_to_action[best_action_idx]
+
+                # Simulate the environment
+                sim_env = current_env.env.clone()
+                src, dst = best_action
+                sim_env.move(src, dst)
+                reward = self.compute_action_reward(sim_env, src, dst)
+
+                # Update Q-values and visit counts
+                node["visit_counts"][best_action_idx] += 1
+                node["q_values"][best_action_idx] += (reward + discount_factor * state_values[idx] - node["q_values"][best_action_idx]) / node["visit_counts"][best_action_idx]
+
+                # Add the next environment to the list
+                next_env_list.append(
+                    CurrentEnv(
+                        sim_env, current_env.depth + 1, reward, current_env.original_env_idx, best_action_idx
+                    )
                 )
-                for idx, current_env in enumerate(current_env_list)
-            ))
             mcts_time += time.time_ns() - mcts_start_time
 
-            for idx, next_env in enumerate(next_env_list):
-                action_rewards[next_env.original_env_idx][next_env.action_idx] += next_env.reward * discount_factor ** next_env.depth
+            current_env_list = next_env_list
 
-            current_env_list = []
-            if dd < mcts_depth:
-                for idx, cur_env in enumerate(next_env_list):
-                    if not cur_env.env.have_valid_moves():
-                        continue
-                    if not cur_env.env.get_is_done() and not cur_env.env.get_is_solved():
-                        current_env_list.append(cur_env)
-
+        # Select the final action for each environment
         action_indices = []
-        for env_idx, env in enumerate(self.envs):
-            if env.get_is_done() or len(action_rewards[env_idx]) == 0:
+        for env in self.envs:
+            if env.get_is_done():
+                action_indices.append(None)
+                continue
+
+            state_hash = hash_state(self.state_encode_helper(env))
+            node = get_tree_node(state_hash)
+            if not node["visit_counts"]:
                 action_indices.append(None)
             else:
-                action_indices.append(max(action_rewards[env_idx].items(), key=lambda x: x[1])[0])
+                action_indices.append(max(node["visit_counts"], key=node["visit_counts"].get))
 
-        return action_indices, probs_time, value_time, mcts_time, num_envs_in_depth
+        return action_indices, network_time, mcts_time
 
     def compute_action_reward(self, env, src: int, dst: int) -> float:
         reward = -0.5 / self.hard_factor
@@ -276,8 +257,7 @@ class AlphaSortTrainer:
 
         self.logger.info(
             f"Episode {episode: 03d} | Elapsed Time "
-            f"| Torch Prob actions: {cum_time_dict['probs_time'] / 10**9:.2f} seconds "
-            f"| Torch Value actions: {cum_time_dict['value_time'] / 10**9:.2f} seconds "
+            f"| Evaluate Networks: {cum_time_dict['network_time'] / 10**9:.2f} seconds "
             f"| MCTS actions: {cum_time_dict['mcts_time'] / 10**9:.2f} seconds "
             f"| Select actions: {cum_time_dict['select_actions'] / 10**9:.2f} seconds "
             f"| Compute rewards: {cum_time_dict['compute_rewards'] / 10**9:.2f} seconds "
@@ -287,7 +267,7 @@ class AlphaSortTrainer:
         for depth, count in num_envs_in_depth.items():
             self.logger.info(f"Episode {episode: 03d} | Depth {depth} | Number of environments: {count / step_count:.2f}")
 
-    def train(self, num_episodes, mcts_depth=3, top_k=7, discount_factor=0.9, train_steps_per_move=2):
+    def train(self, num_episodes, mcts_depth=3, discount_factor=0.9, train_steps_per_move=2):
         recent_results = deque(maxlen=10)
 
         for episode in range(num_episodes):
@@ -309,13 +289,10 @@ class AlphaSortTrainer:
 
                 # Get valid actions and select actions for each environment
                 select_actions_start = time.time_ns()
-                action_indices, probs_time, value_time, mcts_time, num_envs_in_depth_output = self.select_actions(mcts_depth, top_k, discount_factor)
+                action_indices, network_time, mcts_time = self.select_actions(mcts_depth, discount_factor)
                 cum_time_dict["select_actions"] += time.time_ns() - select_actions_start
-                cum_time_dict["probs_time"] += probs_time
-                cum_time_dict["value_time"] += value_time
+                cum_time_dict["network_time"] += network_time
                 cum_time_dict["mcts_time"] += mcts_time
-                for depth, count in num_envs_in_depth_output.items():
-                    num_envs_in_depth[depth] += count
 
                 # Map action indices to actions
                 actions = [self.index_to_action[idx] if idx is not None else (-1, -1) for idx in action_indices]
