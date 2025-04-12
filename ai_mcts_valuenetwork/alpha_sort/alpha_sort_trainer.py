@@ -51,7 +51,7 @@ class AlphaSortTrainer:
         encoded_state = env.get_encoded_state(self.max_num_colors, self.num_empty_tubes, self.max_tube_capacity)
         return np.array(encoded_state, dtype=np.float32)
 
-    def select_actions(self, mcts_depth, discount_factor=0.9, c_puct=1.0):
+    def select_actions(self, mcts_depth, discount_factor=0.9, c_puct=2.0):
         def get_tree_node(state_hash):
             """Retrieve or initialize a tree node for the given state."""
             if state_hash not in self.tree:
@@ -163,7 +163,7 @@ class AlphaSortTrainer:
     def compute_action_reward(self, env, src: int, dst: int) -> float:
         reward = -0.5 / self.hard_factor
         if env.get_is_solved():
-            return 200.0 / self.hard_factor
+            return 300.0 / self.hard_factor
         reward += self._compute_tube_rewards(env, src, dst)
         reward += self._compute_state_history_penalty(env)
         return reward
@@ -190,11 +190,11 @@ class AlphaSortTrainer:
         penalty = 0.0
         step_factor = 1.0 + env.get_move_count() / self.max_step_count
         if env.is_recent_state_key():
-            penalty -= 0.1 / self.hard_factor * step_factor
+            penalty -= 1.0 / self.hard_factor * step_factor
         if env.get_current_state_count() > self.num_colors:
-            penalty -= 5.0 / self.hard_factor * env.get_current_state_count() / self.recursive_move_threshold * step_factor
+            penalty -= 10.0 / self.hard_factor * env.get_current_state_count() / self.recursive_move_threshold * step_factor
         if env.get_last_state_count() > self.num_colors:
-            penalty -= 5.0 / self.hard_factor * env.get_last_state_count() / self.recursive_move_threshold * step_factor
+            penalty -= 10.0 / self.hard_factor * env.get_last_state_count() / self.recursive_move_threshold * step_factor
         return penalty
 
     def check_is_recursive_move(self, env) -> bool:
@@ -236,12 +236,13 @@ class AlphaSortTrainer:
             if env.get_is_done():
                 continue
             if action_indices[i] is None:
-                self.agent.store_transition(encoded_states[i], 0, -10.0, encoded_states[i], True)
+                self.agent.store_transition(encoded_states[i], 0, -100.0, encoded_states[i], True)
             else:
+                priority = 1.0 if not env.is_recent_state_key() else 0.35
                 self.agent.store_transition(
                     encoded_states[i],
                     action_indices[i],
-                    rewards[i],
+                    rewards[i] * priority,
                     encoded_next_states[i],
                     step_dones[i]
                 )
@@ -357,6 +358,6 @@ class AlphaSortTrainer:
             )
 
             # Save the model periodically
-            if episode > 0 and episode % 5 == 0:
+            if episode > 0 and episode % 20 == 0:
                 model_save_path = save_model(self.agent, self.num_colors, self.tube_capacity, episode)
                 logging.info(f"Model for the checkpoint at episode {episode: 03d} is saved to {model_save_path}.")

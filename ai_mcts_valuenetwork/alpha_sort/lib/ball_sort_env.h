@@ -89,7 +89,8 @@ private:
 
     // History of state keys
     std::deque<std::string> state_key_history;
-    static const int MAX_HISTORY_SIZE = 10;
+    static const int MAX_HISTORY_SIZE = 50;
+    static const int MIN_RECENT_STATE_CHECK_SIZE = 10;
     std::unordered_map<std::string, int> frequency_map;
     void update_state_key();
 

@@ -89,7 +89,6 @@ class AlphaSortAgent:
         # Load the pretrained state dictionary
         pretrained_state = torch.load(pretrained_model_path, map_location=map_location)
         policy_pretrained_state = pretrained_state["policy_net"]
-        value_pretrained_state = pretrained_state["value_net"]
 
         # Load weights for the policy network
         policy_state = self.policy_net.state_dict()
@@ -107,11 +106,3 @@ class AlphaSortAgent:
             policy_state["fc2.bias"].zero_()
 
         self.policy_net.load_state_dict(policy_state, strict=False)
-
-        # Load weights for the value network
-        value_state = self.value_net.state_dict()
-        for name, param in value_pretrained_state.items():
-            if param.shape == value_state[name].shape:
-                value_state[name] = param  # Transfer matching weights
-
-        self.value_net.load_state_dict(value_state, strict=False)

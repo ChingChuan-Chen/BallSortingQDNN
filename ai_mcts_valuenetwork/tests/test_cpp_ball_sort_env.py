@@ -8,6 +8,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 # Import the BallSortEnv class from the C++ extension
 from alpha_sort.lib.ball_sort_env import BallSortEnv
 
+
 @pytest.fixture
 def env():
     state = np.array([
@@ -19,6 +20,7 @@ def env():
         [0, 0, 0, 0],
     ], dtype=np.int8)
     return BallSortEnv(tube_capacity=4, num_colors=4, num_empty_tubes=2, state=state)
+
 
 @pytest.fixture
 def solved_env():
@@ -32,6 +34,7 @@ def solved_env():
     ], dtype=np.int8)
     return BallSortEnv(tube_capacity=4, num_colors=4, num_empty_tubes=2, state=state)
 
+
 @pytest.fixture
 def imbalanced_env():
     state = np.array([
@@ -44,9 +47,11 @@ def imbalanced_env():
     ], dtype=np.int8)
     return BallSortEnv(tube_capacity=4, num_colors=4, num_empty_tubes=2, state=state)
 
+
 @pytest.fixture
 def random_env():
     return BallSortEnv(tube_capacity=4, num_colors=4, num_empty_tubes=2)
+
 
 def test_clone(env):
     # Clone the environment
@@ -78,6 +83,7 @@ def test_clone(env):
     assert cloned_env.get_valid_moves() != env.get_valid_moves()
     assert cloned_env.get_move_count() == env.get_move_count()
 
+
 def test_top_index(env, imbalanced_env):
     for i in range(4):
         assert env.top_index(i) == 3
@@ -95,6 +101,7 @@ def test_top_index(env, imbalanced_env):
     assert imbalanced_env.top_index(5) == -1
     assert imbalanced_env.top_index(6) == -1
 
+
 def test_get_top_color_streak(env, imbalanced_env):
     assert env.get_top_color_streak(0) == 4
     assert env.get_top_color_streak(1) == 2
@@ -110,6 +117,7 @@ def test_get_top_color_streak(env, imbalanced_env):
     assert imbalanced_env.get_top_color_streak(4) == 2
     assert imbalanced_env.get_top_color_streak(5) == 0
 
+
 def test_is_valid_move(env, imbalanced_env, random_env):
     assert not env.is_valid_move(0, 4)  # Move from tube 0 to empty tube 4
     assert env.is_valid_move(1, 5)  # Move from tube 1 to empty tube 5
@@ -123,15 +131,18 @@ def test_is_valid_move(env, imbalanced_env, random_env):
     assert not random_env.is_valid_move(0, 1)
     assert random_env.is_valid_move(0, 4)
 
+
 def test_is_solved(env, solved_env, imbalanced_env):
     assert env.get_is_solved() == False
     assert solved_env.get_is_solved() == True
     assert imbalanced_env.get_is_solved() == False
 
+
 def test_get_valid_moves(env, solved_env, imbalanced_env):
     assert sorted(env.get_valid_moves()) == [(1, 4), (1, 5), (2, 4), (2, 5)]
     assert sorted(imbalanced_env.get_valid_moves()) == [(0, 1), (0, 5), (1, 0), (1, 5), (4, 5)]
     assert solved_env.get_valid_moves() == []
+
 
 def test_get_state(env):
     """Test that get_state returns the correct NumPy array."""
@@ -145,6 +156,7 @@ def test_get_state(env):
         [0, 0, 0, 0],
     ], dtype=np.int8)
     np.testing.assert_array_equal(state, expected_state)
+
 
 def test_move(env):
     """Test the move method and its effect on state."""
@@ -162,6 +174,7 @@ def test_move(env):
     np.testing.assert_array_equal(env.get_state(), expected_state)
     assert env.get_move_count() == True
     assert env.get_is_moved() == True
+
 
 def test_moved_solved(env):
     assert env.get_is_moved() == True
@@ -187,6 +200,7 @@ def test_moved_solved(env):
     assert env.get_is_solved() == True
     assert env.get_move_count() == 8
 
+
 def test_is_full_tube(env, imbalanced_env):
     """Test the is_full_tube method."""
     assert env.is_full_tube(0)
@@ -203,6 +217,7 @@ def test_is_full_tube(env, imbalanced_env):
     assert not imbalanced_env.is_full_tube(4)
     assert not imbalanced_env.is_full_tube(5)
 
+
 def test_is_empty_tube(env, imbalanced_env):
     """Test the is_empty_tube method."""
     assert not env.is_empty_tube(0)
@@ -218,6 +233,7 @@ def test_is_empty_tube(env, imbalanced_env):
     assert not imbalanced_env.is_empty_tube(3)
     assert not imbalanced_env.is_empty_tube(4)
     assert env.is_empty_tube(5)
+
 
 def test_is_completed_tube(env, solved_env, imbalanced_env):
     """Test the is_completed_tube method."""
@@ -242,12 +258,14 @@ def test_is_completed_tube(env, solved_env, imbalanced_env):
     assert not imbalanced_env.is_completed_tube(4)
     assert not imbalanced_env.is_completed_tube(5)
 
+
 def test_reset(env):
     env.move(0, 5)
     env.reset()
     assert env.get_is_solved() == False
     assert env.get_is_moved() == False
     assert env.get_move_count() == 0
+
 
 def test_undo_move(env):
     """Test the undo_move method and its effect on state."""
@@ -268,6 +286,7 @@ def test_undo_move(env):
     assert env.get_move_count() == 0
     assert env.get_is_moved() == True
 
+
 def test_state_key(env):
     # Get the state key
     state_key = env.get_state_key()
@@ -277,14 +296,15 @@ def test_state_key(env):
     assert isinstance(state_key, str)
     assert len(state_key) > 0
 
+
 def test_is_recent_state_key(env):
     assert env.is_recent_state_key() is False
     for _ in range(6):
         env.move(1, 4)
         env.move(4, 1)
-    assert env.is_recent_state_key() is True
     assert env.get_current_state_count() == 7
     assert env.get_last_state_count() == 6
+    assert env.is_recent_state_key() is True
 
     # check if it is in recursive move
     for _ in range(20):
@@ -294,6 +314,7 @@ def test_is_recent_state_key(env):
     assert env.is_recent_state_key() is True
     assert env.get_current_state_count() == 27
     assert env.get_last_state_count() == 26
+
 
 def test_get_encoded_state(env):
     max_num_colors = 12
