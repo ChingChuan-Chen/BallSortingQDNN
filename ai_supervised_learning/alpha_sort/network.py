@@ -50,6 +50,7 @@ class Network(nn.Module):
         self.res2 = ResBlock(128, 128)
         self.res3 = ResBlock(128, 128)
         self.res4 = ResBlock(128, 128)
+        self.res5 = ResBlock(128, 128)
 
         # ReLU activation
         self.relu = nn.ReLU(inplace=True)
@@ -57,14 +58,14 @@ class Network(nn.Module):
         # Policy network head
         self.policy_conv = nn.Conv2d(128, policy_output_channels, kernel_size=1, stride=1, padding=0)
         self.policy_bn = nn.BatchNorm2d(policy_output_channels)
-        self.policy_fc1 = nn.Linear(self.conv_output_channels * policy_output_channels, 256)
-        self.policy_fc2 = nn.Linear(256, self.action_dim)
+        self.policy_fc1 = nn.Linear(self.conv_output_channels * policy_output_channels, 128)
+        self.policy_fc2 = nn.Linear(128, self.action_dim)
 
         # Value network head
         self.value_conv = nn.Conv2d(128, value_output_channels, kernel_size=1, stride=1, padding=0)
         self.value_bn = nn.BatchNorm2d(value_output_channels)
-        self.value_fc1 = nn.Linear(self.conv_output_channels * value_output_channels, 256)
-        self.value_fc2 = nn.Linear(256, 1)
+        self.value_fc1 = nn.Linear(self.conv_output_channels * value_output_channels, 128)
+        self.value_fc2 = nn.Linear(128, 1)
 
     def forward(self, x):
         x = self.relu(self.bn1(self.conv1(x)))
@@ -72,6 +73,7 @@ class Network(nn.Module):
         x = self.res2(x)
         x = self.res3(x)
         x = self.res4(x)
+        x = self.res5(x)
 
         # value network head
         v = self.relu(self.value_bn(self.value_conv(x)))

@@ -31,14 +31,14 @@ if __name__ == "__main__":
     max_num_colors = 12
     num_empty_tubes = 2
     max_number_tubes = max_num_colors + num_empty_tubes
-    n_envs = 16
-    batch_size = 256
+    n_envs = 64
+    batch_size = 1024
     previous_model_path = None
 
     train_game_size = [
-        {"num_colors": 4, "tube_capacity": 4, "pretrained_epochs": 100, "episodes": 20},
-        {"num_colors": 5, "tube_capacity": 4, "pretrained_epochs": 100, "episodes": 20},
-        # {"num_colors": 6, "tube_capacity": 4, "pretrained_epochs": 600, "episodes": 100},
+        {"num_colors": 4, "tube_capacity": 4, "pretrained_epochs": 50, "episodes": 20},
+        {"num_colors": 5, "tube_capacity": 4, "pretrained_epochs": 50, "episodes": 20},
+        {"num_colors": 6, "tube_capacity": 4, "pretrained_epochs": 50, "episodes": 20},
         # {"num_colors": 7, "tube_capacity": 4, "pretrained_epochs": 500, "episodes": 200},
         # {"num_colors": 8, "tube_capacity": 4, "pretrained_epochs": 500, "episodes": 200},
         # {"num_colors": 11, "tube_capacity": 4, "episodes": 100},
@@ -78,13 +78,16 @@ if __name__ == "__main__":
         trainer = AlphaSortTrainer(envs, agent, max_num_colors, max_tube_capacity)
 
         # Pre-train with supervised learning
-        logger.info("Starting supervised learning pre-training...")
-        try:
-            trainer.train_supervised(num_epochs=pretrained_epochs)
-        except Exception as e:
-            logger.error(f"An error occurred during supervised training: {e} and the traceback is {traceback.format_exc()}")
-            raise
-        logger.info("Supervised learning pre-training completed.")
+        if pretrained_epochs > 0:
+            logger.info("Starting supervised learning pre-training...")
+            try:
+                trainer.train_supervised(num_epochs=pretrained_epochs)
+            except Exception as e:
+                logger.error(f"An error occurred during supervised training: {e} and the traceback is {traceback.format_exc()}")
+                raise
+            logger.info("Supervised learning pre-training completed.")
+        else:
+            logger.info("No pre-training required.")
 
         # Reinforcement learning
         logging.info("Starting reinforcement learning...")
