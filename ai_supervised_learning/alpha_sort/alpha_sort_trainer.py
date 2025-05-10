@@ -30,8 +30,8 @@ class AlphaSortTrainer:
         self.num_tubes = self.num_colors + self.num_empty_tubes
         self.num_envs = len(envs)
         self.max_tubes = max_num_colors + self.num_empty_tubes
-        self.max_step_count = 125 * envs[0].get_num_colors()
-        self.recursive_move_threshold = self.num_tubes * self.tube_capacity
+        self.max_step_count = 75 * envs[0].get_num_colors()
+        self.recursive_move_threshold = self.num_tubes * self.tube_capacity * 0.35
         self.hard_factor = self.num_colors / self.tube_capacity * (1.0 + self.num_empty_tubes / self.num_colors)
 
         # Precompute all possible actions
@@ -378,7 +378,7 @@ class AlphaSortTrainer:
             )
 
             # Save the model periodically
-            if episode > 0 and episode % 10 == 0 and episode == num_episodes - 1:
+            if episode > 0 and episode % 5 == 0 and episode == num_episodes - 1:
                 model_save_path = save_model(self.agent, self.num_colors, self.tube_capacity, episode)
                 logging.info(f"Model for the checkpoint at episode {episode: 03d} is saved to {model_save_path}.")
 
@@ -391,7 +391,7 @@ class AlphaSortTrainer:
             # Clear the replay memory for each epoch
             self.agent.memory.clear()
 
-            solution_path_cum_count = 0
+            num_solutions = 0
             solved_envs_count = 0
             solved_step_count = 0
             max_solved_step_count = 0
@@ -401,39 +401,41 @@ class AlphaSortTrainer:
 
                 # Generate the solution path using DFS
                 find_solution_path_start_time = time.time_ns()
-                solution_path = env.find_solution_path()
+                solution_paths = env.find_solution_paths()
                 find_solution_path_time += time.time_ns() - find_solution_path_start_time
+                path_lens = np.array([len(path) for path in solution_paths])
 
-                if not solution_path:
-                    continue  # Skip if no solution is found
+                if len(path_lens) <= 0 or path_lens[0] == 0:
+                    continue
+
                 solved_envs_count += 1
-                solved_step_count += len(solution_path)
-                max_solved_step_count = max(max_solved_step_count, len(solution_path))
-                min_solved_step_count = min(min_solved_step_count, len(solution_path))
-
-                solution_path_cum_count += len(solution_path)
+                num_solutions += len(solution_paths)
+                solved_step_count += np.sum(path_lens)
+                max_solved_step_count = max(max_solved_step_count, np.max(path_lens))
+                min_solved_step_count = min(min_solved_step_count, np.min(path_lens))
 
                 move_start_time = time.time_ns()
-                # Encode the initial state
-                state = self.state_encode_helper(env)
-                for move in solution_path:
-                    # Get the action index for the move
-                    action_idx = self.action_to_index[move]
+                for path in solution_paths:
+                    sim_env = env.clone()
+                    state = self.state_encode_helper(sim_env)
+                    for move in path:
+                        # Get the action index for the move
+                        action_idx = self.action_to_index[move]
 
-                    # Apply the move and encode the next state
-                    env.move(*move)
-                    next_state = self.state_encode_helper(env)
+                        # Apply the move and encode the next state
+                        sim_env.move(*move)
+                        next_state = self.state_encode_helper(sim_env)
 
-                    # Store the transition in replay memory
-                    done = env.get_is_solved()
-                    self.agent.store_transition(state, action_idx, 1.0, next_state, done)
+                        # Store the transition in replay memory
+                        done = sim_env.get_is_solved()
+                        self.agent.store_transition(state, action_idx, 1.0, next_state, done)
 
-                    # Update the current state
-                    state = next_state
+                        # Update the current state
+                        state = next_state
                 move_time += time.time_ns() - move_start_time
 
             # Train the agent using the stored transitions
-            num_train_steps = min(1, solution_path_cum_count // self.agent.batch_size)
+            num_train_steps = min(1, solved_step_count // self.agent.batch_size)
             train_step_start_time = time.time_ns()
             for _ in range(num_train_steps):
                 self.agent.train_step()
@@ -442,9 +444,9 @@ class AlphaSortTrainer:
             epoch_end_time = time.time_ns()
             logging.info(
                 f"Epoch {epoch + 1}/{num_epochs} | Solved Rate: {solved_envs_count / len(self.envs) * 100.0: 7.2f}% "
-                f"| Average steps: {solved_step_count / solved_envs_count if solved_envs_count > 0 else 0} "
+                f"| Average steps: {solved_step_count / num_solutions if num_solutions > 0 else 0} "
                 f"| Max/Min steps: {max_solved_step_count} / {min_solved_step_count} "
-                f"| Total solution path count: {solution_path_cum_count}"
+                f"| Total solution path count: {solved_step_count}"
             )
             logging.info(
                 f"Epoch {epoch + 1}/{num_epochs} | Total elapsed time: {(epoch_end_time - epoch_start_time) / 10**9:.2f} seconds"
@@ -454,6 +456,6 @@ class AlphaSortTrainer:
             )
 
             # Save the model periodically
-            if epoch > 0 and epoch % 10 == 0 or epoch == num_epochs - 1:
+            if epoch > 0 and epoch % 5 == 0 or epoch == num_epochs - 1:
                 model_save_path = save_model(self.agent, self.num_colors, self.tube_capacity, epoch, save_dir="pretrained_models")
                 logging.info(f"Model for the checkpoint at episode {epoch: 03d} is saved to {model_save_path}.")

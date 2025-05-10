@@ -1,6 +1,6 @@
 # # Import all modules and classes from the alpha_sort library
 from .alpha_sort_agent import AlphaSortAgent
-from .policy_network import PolicyNetwork
+from .network import Network
 from .replay_memory import ReplayMemory
 from .alpha_sort_trainer import AlphaSortTrainer
 from .utils import save_model
@@ -11,7 +11,7 @@ __all__ = [
     "AlphaSortTrainer",
     "AlphaSortAgent",
     "BallSortEnv",
-    "PolicyNetwork",
+    "Network",
     "ReplayMemory",
     "save_model",
 ]

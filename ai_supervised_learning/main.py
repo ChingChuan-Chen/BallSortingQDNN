@@ -31,13 +31,13 @@ if __name__ == "__main__":
     max_num_colors = 12
     num_empty_tubes = 2
     max_number_tubes = max_num_colors + num_empty_tubes
-    n_envs = 128
-    batch_size = 2048
-    previous_model_path = 'pretrained_models/alphasort_model_4c_4cap_ep0099.pth'
+    n_envs = 16
+    batch_size = 256
+    previous_model_path = None
 
     train_game_size = [
-        {"num_colors": 4, "tube_capacity": 4, "pretrained_epochs": 300, "episodes": 40},
-        {"num_colors": 5, "tube_capacity": 4, "pretrained_epochs": 500, "episodes": 40},
+        {"num_colors": 4, "tube_capacity": 4, "pretrained_epochs": 100, "episodes": 20},
+        {"num_colors": 5, "tube_capacity": 4, "pretrained_epochs": 100, "episodes": 20},
         # {"num_colors": 6, "tube_capacity": 4, "pretrained_epochs": 600, "episodes": 100},
         # {"num_colors": 7, "tube_capacity": 4, "pretrained_epochs": 500, "episodes": 200},
         # {"num_colors": 8, "tube_capacity": 4, "pretrained_epochs": 500, "episodes": 200},

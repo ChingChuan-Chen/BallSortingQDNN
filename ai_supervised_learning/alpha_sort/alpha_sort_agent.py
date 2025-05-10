@@ -2,8 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
-from alpha_sort.policy_network import PolicyNetwork
-from alpha_sort.value_network import ValueNetwork
+from alpha_sort.network import Network
 from alpha_sort.replay_memory import ReplayMemory
 
 
@@ -20,24 +19,16 @@ class AlphaSortAgent:
 
         self.device = device
 
-        # Policy network
-        self.policy_net = PolicyNetwork(max_num_colors, num_colors).to(self.device)
-
-        # Value network
-        self.value_net = ValueNetwork(max_num_colors, num_colors).to(self.device)
+        # network
+        self.network = Network(max_num_colors, max_tube_capacity, num_colors).to(self.device)
 
         # Target networks
-        self.target_policy_net = PolicyNetwork(max_num_colors, num_colors).to(self.device)
-        self.target_policy_net.load_state_dict(self.policy_net.state_dict())
-        self.target_policy_net.eval()
-
-        self.target_value_net = ValueNetwork(max_num_colors, num_colors).to(self.device)
-        self.target_value_net.load_state_dict(self.value_net.state_dict())
-        self.target_value_net.eval()
+        self.target_network = Network(max_num_colors, max_tube_capacity, num_colors).to(self.device)
+        self.target_network.load_state_dict(self.network.state_dict())
+        self.target_network.eval()
 
         # Optimizers
-        self.policy_optimizer = torch.optim.Adam(self.policy_net.parameters(), lr=lr, weight_decay=1e-5)
-        self.value_optimizer = torch.optim.Adam(self.value_net.parameters(), lr=lr, weight_decay=1e-5)
+        self.network_optimizer = torch.optim.Adam(self.network.parameters(), lr=lr, weight_decay=1e-5)
 
         # Replay memory
         self.memory = ReplayMemory(relay_memory_size)
@@ -60,40 +51,44 @@ class AlphaSortAgent:
         next_states = torch.tensor(np.array(next_states), dtype=torch.float32, device=self.device)
         dones = torch.tensor(dones, dtype=torch.float32, device=self.device)
 
-        # Policy network loss
-        q_values = self.policy_net(states).gather(1, actions).squeeze()
-        next_q_values = self.target_policy_net(next_states).max(1)[0]
-        target_q_values = rewards + (1 - dones) * self.gamma * next_q_values
-        policy_loss = F.mse_loss(q_values, target_q_values.detach())
+        # Forward pass through the policy network
+        current_values, current_logits = self.network(states)
+        current_log_probs = F.log_softmax(current_logits, dim=1)
+        action_log_probs = current_log_probs.gather(1, actions)
 
-        # Value network loss
-        state_values = self.value_net(states).squeeze()
-        next_state_values = self.target_value_net(next_states).squeeze()
-        target_values = rewards + (1 - dones) * self.gamma * next_state_values
-        value_loss = F.mse_loss(state_values, target_values.detach())
+        # Compute value loss (MSE between predicted value and target value)
+        with torch.no_grad():
+            next_values, _ = self.target_network(next_states)
+            target_values = rewards + self.gamma * next_values * (1 - dones)
+        value_loss = F.mse_loss(current_values, target_values)
 
-        # Backpropagation
-        self.policy_optimizer.zero_grad()
-        policy_loss.backward()
-        self.policy_optimizer.step()
+        # Compute policy loss (negative log likelihood of actions)
+        policy_loss = -action_log_probs.mean()
 
-        self.value_optimizer.zero_grad()
-        value_loss.backward()
-        self.value_optimizer.step()
+        # Combine losses
+        loss = value_loss + policy_loss
+
+        # Back-Propagation
+        self.network_optimizer.zero_grad()
+        loss.backward()
+
+        # Gradient clipping
+        torch.nn.utils.clip_grad_norm_(self.network.parameters(), max_norm=1.0)
+
+        self.network_optimizer.step()
 
     def update_target_networks(self):
-        self.target_policy_net.load_state_dict(self.policy_net.state_dict())
-        self.target_value_net.load_state_dict(self.value_net.state_dict())
+        self.target_network.load_state_dict(self.network.state_dict())
 
     def load_pretrained_weights(self, pretrained_model_path, map_location=None):
         # Load the pretrained state dictionary
         pretrained_state = torch.load(pretrained_model_path, map_location=map_location)
-        policy_pretrained_state = pretrained_state["policy_net"]
+        policy_pretrained_state = pretrained_state["model"]
 
         # Load weights for the policy network
-        policy_state = self.policy_net.state_dict()
-        old_action_dim = policy_pretrained_state["fc2.weight"].shape[0]  # Output size of old policy network
-        new_action_dim = policy_state["fc2.weight"].shape[0]  # Output size of new policy network
+        policy_state = self.network.state_dict()
+        old_action_dim = policy_pretrained_state["policy_fc2.weight"].shape[0]  # Output size of old policy network
+        new_action_dim = policy_state["policy_fc2.weight"].shape[0]  # Output size of new policy network
 
         # Transfer matching layers for the policy network
         for name, param in policy_pretrained_state.items():
@@ -102,7 +97,7 @@ class AlphaSortAgent:
 
         # Reinitialize output layer if action_dim changed
         if old_action_dim != new_action_dim:
-            torch.nn.init.xavier_uniform_(policy_state["fc2.weight"])
-            policy_state["fc2.bias"].zero_()
+            torch.nn.init.xavier_uniform_(policy_state["policy_fc2.weight"])
+            policy_state["policy_fc2.bias"].zero_()
 
-        self.policy_net.load_state_dict(policy_state, strict=False)
+        self.network.load_state_dict(policy_state, strict=False)
