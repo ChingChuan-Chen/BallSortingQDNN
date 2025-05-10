@@ -40,10 +40,7 @@ def save_model(agent, num_colors, tube_capacity, episode=None, save_dir="checkpo
     else:
         alpha_sort_model_name = f"alphasort_model_{num_colors}c_{tube_capacity}cap_ep{episode:04d}.pth"
     alpha_sort_model_path = os.path.join(save_dir, alpha_sort_model_name)
-    torch.save({
-        "policy_net": agent.policy_net.state_dict(),
-        "value_net": agent.value_net.state_dict()
-    }, alpha_sort_model_path)
+    torch.save({"model": agent.network.state_dict()}, alpha_sort_model_path)
 
     logger.info(f"Policy network and value network are successfully saved to {alpha_sort_model_path}")
     return alpha_sort_model_path
