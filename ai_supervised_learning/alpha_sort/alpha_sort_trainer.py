@@ -85,9 +85,9 @@ class AlphaSortTrainer:
             # Batch inference for policy and value networks
             network_start_time = time.time_ns()
             with torch.no_grad():
-                logits = self.agent.policy_net(torch.tensor(np.array(state_inputs), dtype=torch.float32).to(self.agent.device))
+                state_values_device, logits = self.agent.network(torch.tensor(np.array(state_inputs), dtype=torch.float32).to(self.agent.device))
                 probs = F.softmax(logits, dim=1).cpu().numpy()
-                state_values = self.agent.value_net(torch.tensor(np.array(state_inputs), dtype=torch.float32).to(self.agent.device)).cpu().numpy()
+                state_values = state_values_device.cpu().numpy()
             network_time += time.time_ns() - network_start_time
 
             mcts_start_time = time.time_ns()

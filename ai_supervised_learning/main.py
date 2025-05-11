@@ -33,12 +33,12 @@ if __name__ == "__main__":
     max_number_tubes = max_num_colors + num_empty_tubes
     n_envs = 64
     batch_size = 1024
-    previous_model_path = None
+    previous_model_path = 'pretrained_models/alphasort_model_4c_4cap_ep0049.pth'
 
     train_game_size = [
-        {"num_colors": 4, "tube_capacity": 4, "pretrained_epochs": 50, "episodes": 20},
-        {"num_colors": 5, "tube_capacity": 4, "pretrained_epochs": 50, "episodes": 20},
-        {"num_colors": 6, "tube_capacity": 4, "pretrained_epochs": 50, "episodes": 20},
+        {"num_colors": 4, "tube_capacity": 4, "pretrained_epochs": 100, "episodes": 50},
+        {"num_colors": 5, "tube_capacity": 4, "pretrained_epochs": 100, "episodes": 50},
+        {"num_colors": 6, "tube_capacity": 4, "pretrained_epochs": 200, "episodes": 100},
         # {"num_colors": 7, "tube_capacity": 4, "pretrained_epochs": 500, "episodes": 200},
         # {"num_colors": 8, "tube_capacity": 4, "pretrained_epochs": 500, "episodes": 200},
         # {"num_colors": 11, "tube_capacity": 4, "episodes": 100},
@@ -59,7 +59,7 @@ if __name__ == "__main__":
         episodes = stage["episodes"]
         pretrained_epochs = stage["pretrained_epochs"]
 
-        train_steps_per_move = int((n_envs * num_colors * 125 * 0.6) // batch_size)
+        train_steps_per_move = int((n_envs * num_colors * 125 * 0.6) // batch_size - 2)
 
         logger.info(f"Training on puzzle with {num_colors} colors, tube_capacity {tube_capacity}, for {episodes} episodes on {device} with train_steps_per_move = {train_steps_per_move}.")
 
